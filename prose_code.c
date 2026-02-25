@@ -85,42 +85,42 @@ typedef struct {
 } Theme;
 
 static const Theme THEME_DARK = {
-    .bg          = RGB(30,  30,  30),   /* editor background */
-    .bg_dark     = RGB(24,  24,  24),   /* sidebars, title bar */
-    .surface0    = RGB(45,  45,  45),   /* subtle borders */
-    .surface1    = RGB(60,  60,  60),   /* active borders */
-    .surface2    = RGB(80,  80,  80),   /* lighter accents */
-    .overlay0    = RGB(110, 110, 118),  /* muted text */
-    .text        = RGB(212, 212, 212),  /* primary text */
-    .subtext     = RGB(150, 150, 160),  /* secondary text */
-    .lavender    = RGB(255, 20, 147),  /* HOT NEON PINK brand accent */
-    .blue        = RGB(86,  156, 214),  /* keywords blue */
-    .sapphire    = RGB(78,  201, 176),  /* teal/cyan */
-    .sky         = RGB(156, 220, 254),  /* light blue */
-    .teal        = RGB(78,  201, 176),
-    .green       = RGB(181, 206, 168),  /* strings */
-    .yellow      = RGB(220, 220, 170),  /* types/classes */
-    .peach       = RGB(206, 145, 120),  /* string literals */
-    .maroon      = RGB(210, 130, 140),
-    .red         = RGB(244, 135, 113),  /* errors */
-    .mauve       = RGB(197, 134, 192),  /* keywords purple */
-    .pink        = RGB(199, 146, 234),
-    .flamingo    = RGB(209, 175, 175),
-    .rosewater   = RGB(220, 200, 200),
-    .cursor      = RGB(255, 255, 255),
-    .selection   = RGB(38,  79,  120),  /* VS Code blue selection */
-    .activeline  = RGB(40,  40,  40),
-    .gutter      = RGB(24,  24,  24),
-    .gutter_text = RGB(90,  90,  90),
-    .tab_active  = RGB(30,  30,  30),
-    .tab_inactive= RGB(24,  24,  24),
-    .scrollbar_bg= RGB(30,  30,  30),
-    .scrollbar_th= RGB(80,  80,  80),
-    .scrollbar_hover = RGB(110, 110, 110),
-    .accent      = RGB(255, 20, 147),
-    .misspelled  = RGB(244, 135, 113),
-    .focus_dim   = RGB(30,  30,  30),
-    .search_hl   = RGB(81,  69,  24),   /* warm amber highlight */
+    .bg          = RGB(28,  28,  34),   /* editor background — cool-tinted charcoal */
+    .bg_dark     = RGB(22,  22,  28),   /* sidebars, title bar */
+    .surface0    = RGB(38,  38,  46),   /* subtle borders */
+    .surface1    = RGB(52,  52,  62),   /* active borders */
+    .surface2    = RGB(70,  70,  82),   /* lighter accents */
+    .overlay0    = RGB(120, 120, 135),  /* muted text */
+    .text        = RGB(205, 208, 218),  /* primary text — warm off-white */
+    .subtext     = RGB(145, 150, 168),  /* secondary text — soft lavender-gray */
+    .lavender    = RGB(148, 160, 220),  /* calm lavender brand accent */
+    .blue        = RGB(110, 168, 230),  /* keywords — softer sky blue */
+    .sapphire    = RGB(96,  195, 178),  /* teal/cyan — muted jade */
+    .sky         = RGB(145, 200, 240),  /* light blue — gentle */
+    .teal        = RGB(96,  195, 178),
+    .green       = RGB(158, 203, 155),  /* strings — sage green */
+    .yellow      = RGB(220, 200, 140),  /* types/classes — warm wheat */
+    .peach       = RGB(215, 160, 130),  /* string literals — soft terra cotta */
+    .maroon      = RGB(200, 140, 148),
+    .red         = RGB(230, 120, 110),  /* errors — warm coral */
+    .mauve       = RGB(188, 148, 200),  /* keywords purple — dusty orchid */
+    .pink        = RGB(195, 155, 220),
+    .flamingo    = RGB(200, 172, 172),
+    .rosewater   = RGB(210, 195, 195),
+    .cursor      = RGB(148, 160, 220),  /* cursor matches accent for cohesion */
+    .selection   = RGB(48,  58,  90),   /* muted slate-blue selection */
+    .activeline  = RGB(34,  34,  42),
+    .gutter      = RGB(22,  22,  28),
+    .gutter_text = RGB(72,  74,  88),
+    .tab_active  = RGB(28,  28,  34),
+    .tab_inactive= RGB(22,  22,  28),
+    .scrollbar_bg= RGB(28,  28,  34),
+    .scrollbar_th= RGB(58,  58,  72),
+    .scrollbar_hover = RGB(90,  92, 108),
+    .accent      = RGB(148, 160, 220),  /* lavender accent — cohesive */
+    .misspelled  = RGB(230, 120, 110),
+    .focus_dim   = RGB(28,  28,  34),
+    .search_hl   = RGB(72,  65,  36),   /* warm amber highlight */
     .is_dark     = 1,
 };
 
@@ -211,17 +211,17 @@ static void apply_theme(int index);  /* forward decl — defined after g_editor 
 #define CLR_FOCUS_DIM    (g_theme.focus_dim)
 #define CLR_SEARCH_HL    (g_theme.search_hl)
 
-#define TITLEBAR_H       38
-#define TABBAR_H         36
+#define TITLEBAR_H       40
+#define TABBAR_H         38
 #define MENUBAR_H        28
-#define STATUSBAR_H      28
+#define STATUSBAR_H      30
 #define GUTTER_PAD       16
 #define LINE_NUM_CHARS   5
-#define SCROLLBAR_W      12
+#define SCROLLBAR_W      10
 #define MINIMAP_W        80
 #define TAB_MAX_W        200
 #define TAB_MIN_W        100
-#define TAB_PAD          12
+#define TAB_PAD          14
 #define CURSOR_WIDTH     2
 #define FONT_SIZE_DEFAULT 16
 
@@ -2801,7 +2801,7 @@ static void render_titlebar(HDC hdc) {
 
     /* Minimize */
     if (g_editor.titlebar_hover_btn == 1)
-        fill_rect(hdc, x, 0, bw, bh, g_theme.is_dark ? RGB(55, 55, 65) : RGB(210, 210, 215));
+        fill_rect(hdc, x, 0, bw, bh, g_theme.is_dark ? RGB(45, 45, 56) : RGB(210, 210, 215));
     SetTextColor(hdc, CLR_SUBTEXT);
     RECT r1 = { x, 0, x + bw, bh };
     DrawTextW(hdc, L"\x2500", 1, &r1, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -2809,7 +2809,7 @@ static void render_titlebar(HDC hdc) {
     /* Maximize */
     x += bw;
     if (g_editor.titlebar_hover_btn == 2)
-        fill_rect(hdc, x, 0, bw, bh, g_theme.is_dark ? RGB(55, 55, 65) : RGB(210, 210, 215));
+        fill_rect(hdc, x, 0, bw, bh, g_theme.is_dark ? RGB(45, 45, 56) : RGB(210, 210, 215));
     SetTextColor(hdc, CLR_SUBTEXT);
     RECT r2 = { x, 0, x + bw, bh };
     DrawTextW(hdc, L"\x25A1", 1, &r2, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -2845,9 +2845,9 @@ static void render_tabbar(HDC hdc) {
         if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
 
         if (i == g_editor.active_tab) {
-            fill_rounded_rect(hdc, x, y + DPI(4), tw, tbh - DPI(4), DPI(8), CLR_TAB_ACTIVE);
-            /* Active tab indicator line */
-            fill_rect(hdc, x + DPI(8), y + DPI(4), tw - DPI(16), DPI(2), CLR_ACCENT);
+            fill_rounded_rect(hdc, x, y + DPI(5), tw, tbh - DPI(5), DPI(10), CLR_TAB_ACTIVE);
+            /* Active tab bottom indicator — subtle accent bar */
+            fill_rounded_rect(hdc, x + DPI(12), y + tbh - DPI(3), tw - DPI(24), DPI(2), DPI(1), CLR_ACCENT);
             draw_text(hdc, x + DPI(TAB_PAD), y + (tbh - DPI(12)) / 2, label, (int)wcslen(label), CLR_TEXT);
         } else {
             draw_text(hdc, x + DPI(TAB_PAD), y + (tbh - DPI(12)) / 2, label, (int)wcslen(label), CLR_OVERLAY0);
@@ -2932,7 +2932,7 @@ static void render_searchbar(HDC hdc) {
     int y = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H) + DPI(8);
 
     /* Shadow */
-    fill_rounded_rect(hdc, x + 2, y + 2, bar_w, bar_h, DPI(10), RGB(10, 10, 18));
+    fill_rounded_rect(hdc, x + 2, y + 2, bar_w, bar_h, DPI(10), RGB(8, 8, 14));
     /* Background */
     fill_rounded_rect(hdc, x, y, bar_w, bar_h, DPI(10), CLR_SURFACE0);
     /* Border */
@@ -3796,7 +3796,7 @@ static void render_editor(HDC hdc) {
                   g_theme.is_dark ? RGB(255, 255, 255) : RGB(0, 0, 0));
         /* Semi-transparent effect: draw bg_dark over with slight alpha via blend */
         fill_rect(hdc, mm_x + 1, edit_y + vp_top, mm_w - 1, vp_bot - vp_top,
-                  g_theme.is_dark ? RGB(60, 60, 70) : RGB(200, 210, 230));
+                  g_theme.is_dark ? RGB(48, 50, 62) : RGB(200, 210, 230));
 
         /* Draw minimap lines — visual line bars */
         int max_render_lines = (int)(mm_h / scale) + 1;
@@ -3870,10 +3870,10 @@ static void render_editor(HDC hdc) {
                     /* Dim to ~40% brightness for minimap */
                     mc = RGB(GetRValue(tc)*2/5, GetGValue(tc)*2/5, GetBValue(tc)*2/5);
                 } else {
-                    mc = g_theme.is_dark ? RGB(140, 140, 150) : RGB(120, 120, 130);
+                    mc = g_theme.is_dark ? RGB(120, 122, 138) : RGB(120, 120, 130);
                 }
             } else {
-                mc = g_theme.is_dark ? RGB(140, 140, 150) : RGB(120, 120, 130);
+                mc = g_theme.is_dark ? RGB(120, 122, 138) : RGB(120, 120, 130);
             }
             /* Dim lines outside viewport slightly */
             if (my < edit_y + vp_top || my > edit_y + vp_bot) {
@@ -3895,7 +3895,7 @@ static void render_stats_screen(HDC hdc) {
     int ch = g_editor.client_h;
 
     /* Dim the background */
-    fill_rect(hdc, 0, 0, cw, ch, g_theme.is_dark ? RGB(18, 18, 22) : RGB(240, 240, 245));
+    fill_rect(hdc, 0, 0, cw, ch, g_theme.is_dark ? RGB(14, 14, 20) : RGB(240, 240, 245));
 
     /* Panel dimensions */
     int pw = DPI(480), ph = DPI(420);
@@ -3906,12 +3906,12 @@ static void render_stats_screen(HDC hdc) {
 
     /* Panel background + border */
     fill_rounded_rect(hdc, px + 3, py + 3, pw, ph, DPI(16),
-                      g_theme.is_dark ? RGB(8, 8, 12) : RGB(180, 180, 185));
+                      g_theme.is_dark ? RGB(6, 6, 12) : RGB(180, 180, 185));
     fill_rounded_rect(hdc, px, py, pw, ph, DPI(16), CLR_BG);
     fill_rounded_rect(hdc, px + 1, py + 1, pw - 2, ph - 2, DPI(15), CLR_BG);
 
     /* Accent bar at top of panel */
-    fill_rect(hdc, px + DPI(24), py + DPI(12), pw - DPI(48), 2, CLR_ACCENT);
+    fill_rounded_rect(hdc, px + DPI(24), py + DPI(12), pw - DPI(48), DPI(2), DPI(1), CLR_ACCENT);
 
     SetBkMode(hdc, TRANSPARENT);
     int y = py + DPI(24);
@@ -4144,7 +4144,7 @@ static void render_menubar(HDC hdc) {
         /* Highlight if this menu is open or hovered */
         if (g_editor.menu_open == i) {
             fill_rounded_rect(hdc, x, y + DPI(3), item_w, h - DPI(6), DPI(4),
-                              g_theme.is_dark ? RGB(55, 55, 65) : RGB(210, 210, 215));
+                              g_theme.is_dark ? RGB(42, 42, 54) : RGB(210, 210, 215));
         }
 
         COLORREF clr = (g_editor.menu_open == i) ? CLR_TEXT : CLR_SUBTEXT;
@@ -4181,17 +4181,17 @@ static void render_menu_dropdown(HDC hdc) {
 
     /* Shadow */
     fill_rounded_rect(hdc, dropdown_x + DPI(2), dropdown_y + DPI(2),
-                      dropdown_w, total_h, DPI(6), RGB(0, 0, 0));
+                      dropdown_w, total_h, DPI(8), RGB(0, 0, 0));
     /* Background */
-    fill_rounded_rect(hdc, dropdown_x, dropdown_y, dropdown_w, total_h, DPI(6),
-                      g_theme.is_dark ? RGB(40, 40, 40) : RGB(248, 248, 248));
+    fill_rounded_rect(hdc, dropdown_x, dropdown_y, dropdown_w, total_h, DPI(8),
+                      g_theme.is_dark ? RGB(34, 34, 42) : RGB(248, 248, 248));
     /* Border */
     HPEN pen = CreatePen(PS_SOLID, 1, CLR_SURFACE1);
     HBRUSH hollow = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
     HPEN old_pen = (HPEN)SelectObject(hdc, pen);
     HBRUSH old_br = (HBRUSH)SelectObject(hdc, hollow);
     RoundRect(hdc, dropdown_x, dropdown_y, dropdown_x + dropdown_w,
-              dropdown_y + total_h, DPI(6), DPI(6));
+              dropdown_y + total_h, DPI(8), DPI(8));
     SelectObject(hdc, old_pen);
     SelectObject(hdc, old_br);
     DeleteObject(pen);
@@ -4229,7 +4229,7 @@ static void render_menu_dropdown(HDC hdc) {
             SIZE ssz;
             GetTextExtentPoint32W(hdc, item->shortcut, (int)wcslen(item->shortcut), &ssz);
             COLORREF sc_clr = (g_editor.menu_hover_item == i)
-                ? (g_theme.is_dark ? RGB(200, 220, 255) : RGB(220, 230, 255))
+                ? (g_theme.is_dark ? RGB(205, 210, 230) : RGB(220, 230, 255))
                 : CLR_OVERLAY0;
             draw_text(hdc, dropdown_x + dropdown_w - pad_x - ssz.cx,
                       cy + (item_h - DPI(12)) / 2,
