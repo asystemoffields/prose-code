@@ -311,6 +311,7 @@ static void gb_grow(GapBuffer *gb, bpos needed) {
 
     bpos new_total = gb->total + needed + GAP_GROW;
     wchar_t *new_buf = (wchar_t *)calloc(new_total, sizeof(wchar_t));
+    if (!new_buf) return; /* OOM — leave buffer unchanged */
 
     /* Copy before gap */
     memcpy(new_buf, gb->buf, gb->gap_start * sizeof(wchar_t));
@@ -325,6 +326,9 @@ static void gb_grow(GapBuffer *gb, bpos needed) {
 }
 
 static void gb_move_gap(GapBuffer *gb, bpos pos) {
+    if (pos < 0) pos = 0;
+    bpos len = gb_length(gb);
+    if (pos > len) pos = len;
     if (pos == gb->gap_start) return;
     if (pos < gb->gap_start) {
         bpos count = gb->gap_start - pos;
@@ -340,7 +344,10 @@ static void gb_move_gap(GapBuffer *gb, bpos pos) {
 }
 
 static void gb_insert(GapBuffer *gb, bpos pos, const wchar_t *text, bpos len) {
+    if (len <= 0 || !text) return;
     gb_grow(gb, len);
+    bpos gap_size = gb->gap_end - gb->gap_start;
+    if (gap_size < len) return; /* gb_grow failed (OOM) */
     gb_move_gap(gb, pos);
     memcpy(gb->buf + gb->gap_start, text, len * sizeof(wchar_t));
     gb->gap_start += len;
@@ -348,6 +355,12 @@ static void gb_insert(GapBuffer *gb, bpos pos, const wchar_t *text, bpos len) {
 }
 
 static void gb_delete(GapBuffer *gb, bpos pos, bpos len) {
+    if (len <= 0) return;
+    if (pos < 0) pos = 0;
+    bpos text_len = gb_length(gb);
+    if (pos > text_len) pos = text_len;
+    if (pos + len > text_len) len = text_len - pos;
+    if (len <= 0) return;
     gb_move_gap(gb, pos);
     gb->gap_end += len;
     if (gb->gap_end > gb->total) gb->gap_end = gb->total;
@@ -357,6 +370,10 @@ static void gb_delete(GapBuffer *gb, bpos pos, bpos len) {
 /* Helper: copy a logical range [start, start+len) from gap buffer into dst.
    dst must have room for at least len wchar_t. */
 static void gb_copy_range(GapBuffer *gb, bpos start, bpos len, wchar_t *dst) {
+    if (start < 0) start = 0;
+    bpos text_len = gb_length(gb);
+    if (start + len > text_len) len = text_len - start;
+    if (len <= 0) return;
     bpos gap_start = gb->gap_start;
     bpos gap_len = gb->gap_end - gb->gap_start;
     bpos end = start + len;
@@ -404,6 +421,7 @@ typedef struct {
 static void lc_init(LineCache *lc) {
     lc->capacity = 1024;
     lc->offsets = (bpos *)malloc(lc->capacity * sizeof(bpos));
+    if (!lc->offsets) { lc->capacity = 0; lc->count = 0; lc->dirty = 1; return; }
     lc->offsets[0] = 0;
     lc->count = 1;
     lc->dirty = 1;
@@ -414,6 +432,7 @@ static void lc_free(LineCache *lc) {
 }
 
 static void lc_rebuild(LineCache *lc, GapBuffer *gb) {
+    if (!lc->offsets) return;
     lc->count = 0;
     lc->offsets[lc->count++] = 0;
 
@@ -422,8 +441,11 @@ static void lc_rebuild(LineCache *lc, GapBuffer *gb) {
     for (bpos i = 0; i < gb->gap_start; i++, logical_pos++) {
         if (gb->buf[i] == L'\n') {
             if (lc->count >= lc->capacity) {
-                lc->capacity *= 2;
-                lc->offsets = (bpos *)realloc(lc->offsets, lc->capacity * sizeof(bpos));
+                bpos new_cap = lc->capacity * 2;
+                bpos *tmp = (bpos *)realloc(lc->offsets, new_cap * sizeof(bpos));
+                if (!tmp) { lc->dirty = 1; return; }
+                lc->offsets = tmp;
+                lc->capacity = new_cap;
             }
             lc->offsets[lc->count++] = logical_pos + 1;
         }
@@ -432,8 +454,11 @@ static void lc_rebuild(LineCache *lc, GapBuffer *gb) {
     for (bpos i = gb->gap_end; i < gb->total; i++, logical_pos++) {
         if (gb->buf[i] == L'\n') {
             if (lc->count >= lc->capacity) {
-                lc->capacity *= 2;
-                lc->offsets = (bpos *)realloc(lc->offsets, lc->capacity * sizeof(bpos));
+                bpos new_cap = lc->capacity * 2;
+                bpos *tmp = (bpos *)realloc(lc->offsets, new_cap * sizeof(bpos));
+                if (!tmp) { lc->dirty = 1; return; }
+                lc->offsets = tmp;
+                lc->capacity = new_cap;
             }
             lc->offsets[lc->count++] = logical_pos + 1;
         }
@@ -478,7 +503,9 @@ static int lc_notify_insert(LineCache *lc, bpos pos, const wchar_t *text, bpos l
     if (newlines == 0) {
         /* No newlines — just shift all offsets after the insertion point */
         bpos line = lc_line_of(lc, pos);
-        for (bpos i = line + 1; i < lc->count; i++)
+        /* Also shift this line's offset if insertion is exactly at its start */
+        bpos start = (line < lc->count && lc->offsets[line] == pos && line > 0) ? line : line + 1;
+        for (bpos i = start; i < lc->count; i++)
             lc->offsets[i] += len;
         return 1;
     }
@@ -488,8 +515,11 @@ static int lc_notify_insert(LineCache *lc, bpos pos, const wchar_t *text, bpos l
         bpos line = lc_line_of(lc, pos);
         /* Grow if needed */
         if (lc->count >= lc->capacity) {
-            lc->capacity *= 2;
-            lc->offsets = (bpos *)realloc(lc->offsets, lc->capacity * sizeof(bpos));
+            bpos new_cap = lc->capacity * 2;
+            bpos *tmp = (bpos *)realloc(lc->offsets, new_cap * sizeof(bpos));
+            if (!tmp) return 0; /* fall back to full rebuild */
+            lc->offsets = tmp;
+            lc->capacity = new_cap;
         }
         /* Shift offsets after insertion point up by 1 slot and add 1 to each */
         for (bpos i = lc->count; i > line + 1; i--)
@@ -516,7 +546,9 @@ static int lc_notify_delete(LineCache *lc, bpos pos, const wchar_t *deleted_text
     if (newlines == 0) {
         /* No newlines — just shift offsets down */
         bpos line = lc_line_of(lc, pos);
-        for (bpos i = line + 1; i < lc->count; i++)
+        /* Also shift this line's offset if deletion is exactly at its start */
+        bpos start = (line < lc->count && lc->offsets[line] == pos && line > 0) ? line : line + 1;
+        for (bpos i = start; i < lc->count; i++)
             lc->offsets[i] -= len;
         return 1;
     }
@@ -527,7 +559,7 @@ static int lc_notify_delete(LineCache *lc, bpos pos, const wchar_t *deleted_text
         /* The newline at pos ends line 'line', so the offset for line+1 gets removed */
         if (line + 1 < lc->count) {
             for (bpos i = line + 1; i < lc->count - 1; i++)
-                lc->offsets[i] = lc->offsets[i + 1] - 1;
+                lc->offsets[i] = lc->offsets[i + 1] - len;
             lc->count--;
         }
         return 1;
@@ -555,6 +587,7 @@ typedef struct {
 static void wc_init(WrapCache *wc) {
     wc->capacity = 1024;
     wc->entries = (WrapEntry *)malloc(wc->capacity * sizeof(WrapEntry));
+    if (!wc->entries) wc->capacity = 0;
     wc->count = 0;
     wc->wrap_col = 0;
 }
@@ -567,8 +600,11 @@ static void wc_free(WrapCache *wc) {
 
 static void wc_push(WrapCache *wc, bpos pos, bpos line) {
     if (wc->count >= wc->capacity) {
-        wc->capacity *= 2;
-        wc->entries = (WrapEntry *)realloc(wc->entries, wc->capacity * sizeof(WrapEntry));
+        bpos new_cap = wc->capacity ? wc->capacity * 2 : 1024;
+        WrapEntry *tmp = (WrapEntry *)realloc(wc->entries, new_cap * sizeof(WrapEntry));
+        if (!tmp) return;
+        wc->entries = tmp;
+        wc->capacity = new_cap;
     }
     wc->entries[wc->count].pos = pos;
     wc->entries[wc->count].line = line;
@@ -616,10 +652,11 @@ static void wc_rebuild(WrapCache *wc, GapBuffer *gb, LineCache *lc, int wrap_col
                     wc_push(wc, row_start, ln);
                     row_start = last_break;
                     col = 0;
-                    for (bpos j = row_start; j <= i; j++) {
+                    for (bpos j = row_start; j < i; j++) {
                         wchar_t jc = WC_CHAR(j);
                         col += (jc == L'\t') ? 4 : 1;
                     }
+                    col += cw_char; /* count current character */
                 } else {
                     wc_push(wc, row_start, ln);
                     row_start = i;
@@ -679,6 +716,7 @@ typedef struct {
     int current;    /* points to next slot */
     int capacity;   /* allocated size of entries[] */
     int next_group; /* counter for generating unique group IDs */
+    int save_point; /* current value at last save — used to track modified state */
 } UndoStack;
 
 #define UNDO_INIT_CAP 256
@@ -713,6 +751,7 @@ static void undo_push(UndoStack *us, UndoType type, bpos pos, const wchar_t *tex
     e->cursor_after = cursor_after;
     e->group = group;
     e->text = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
+    if (!e->text) return; /* OOM — silently drop this undo entry */
     memcpy(e->text, text, len * sizeof(wchar_t));
     e->text[len] = 0;
 
@@ -762,6 +801,7 @@ typedef struct {
     bpos session_start_chars;
     bpos session_start_lines;
     /* Autosave tracking */
+    unsigned int autosave_id;      /* unique per-document ID for untitled autosave filenames */
     int autosave_mutation_snapshot; /* gb.mutation at last autosave — skip if unchanged */
     DWORD autosave_last_time;      /* GetTickCount() of last autosave write */
     /* Block comment state cache — avoid full-document rescan every paint */
@@ -776,7 +816,7 @@ typedef struct {
     int active;
     int current_match;
     int match_count;
-    int *match_positions;
+    bpos *match_positions;
     int replace_active;
     int replace_focused;   /* 0 = search field, 1 = replace field has focus */
     wchar_t replace_text[256];
@@ -876,6 +916,7 @@ typedef struct {
     HWND hwnd;
     HDC hdc_back;
     HBITMAP bmp_back;
+    HBITMAP bmp_back_old; /* original bitmap to restore before deletion */
     HFONT font_main;
     HFONT font_bold;
     HFONT font_italic;
@@ -918,6 +959,7 @@ typedef struct {
 
     /* Autosave */
     wchar_t autosave_dir[MAX_PATH];
+    unsigned int next_autosave_id;  /* monotonic counter for untitled doc IDs */
 
     /* Menu bar state */
     int menu_open;          /* -1 = closed, 0..3 = which menu dropdown is open */
@@ -987,11 +1029,11 @@ static int gutter_width(Document *doc);
 static int compute_block_comment_state(GapBuffer *gb, bpos up_to);
 static int advance_block_comment_state_for_line(GapBuffer *gb, bpos ls, bpos le, int in_bc);
 static void autosave_ensure_dir(void);
-static void autosave_path_for_doc(Document *doc, int tab_idx, wchar_t *out);
+static void autosave_path_for_doc(Document *doc, wchar_t *out);
 static int  write_file_atomic(const wchar_t *final_path, const char *data, int data_len);
-static void autosave_write(Document *doc, int tab_idx);
+static void autosave_write(Document *doc);
 static void autosave_tick(void);
-static void autosave_delete_for_doc(Document *doc, int tab_idx);
+static void autosave_delete_for_doc(Document *doc);
 static void autosave_cleanup_all(void);
 static void autosave_recover(void);
 static int  prompt_save_doc(int tab_idx);
@@ -1149,7 +1191,9 @@ static void spell_cache_insert(const wchar_t *lower, int len, int correct) {
     }
     unsigned int h = spell_hash(lower) & SPELL_CACHE_MASK;
     SpellCacheNode *n = (SpellCacheNode *)malloc(sizeof(SpellCacheNode));
+    if (!n) return;
     n->word = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
+    if (!n->word) { free(n); return; }
     memcpy(n->word, lower, len * sizeof(wchar_t));
     n->word[len] = 0;
     n->correct = correct;
@@ -1190,7 +1234,7 @@ static int spell_check(const wchar_t *word, int len) {
         if (SUCCEEDED(hr) && errors) {
             ISpellingError *err = NULL;
             hr = errors->lpVtbl->Next(errors, &err);
-            if (hr == S_OK && err) {
+            if (err) {
                 /* There's at least one error → word is misspelled */
                 err->lpVtbl->Release(err);
                 errors->lpVtbl->Release(errors);
@@ -1202,6 +1246,7 @@ static int spell_check(const wchar_t *word, int len) {
             spell_cache_insert(lower, len, 1);
             return 1;
         }
+        if (errors) errors->lpVtbl->Release(errors);
     }
 
     /* If COM isn't available, assume correct (don't annoy the user) */
@@ -1357,6 +1402,7 @@ static void kw_table_init(void) {
             if (n->len == len && wcsncmp(n->word, c_keywords[i], len) == 0) { dup = 1; break; }
         }
         if (dup) continue;
+        if (pool_idx >= 256) break; /* pool exhausted */
         KwNode *n = &g_kw_pool[pool_idx++];
         n->word = c_keywords[i];
         n->len = len;
@@ -1385,10 +1431,11 @@ static Document *doc_create(void) {
     undo_init(&doc->undo);
     doc->sel_anchor = -1;
     doc->mode = MODE_PROSE;
-    wcscpy(doc->title, L"Untitled");
+    safe_wcscpy(doc->title, 64, L"Untitled");
     doc->desired_col = -1;
     doc->bc_cached_mutation = -1;
     doc->bc_cached_line = -1;
+    doc->autosave_id = g_editor.next_autosave_id++;
     return doc;
 }
 
@@ -1734,7 +1781,7 @@ static void editor_undo(void) {
              us->entries[us->current - 1].group == group);
 
     doc->sel_anchor = -1;
-    doc->modified = 1;
+    doc->modified = (us->current != us->save_point);
     recalc_lines(doc);
     update_stats(doc);
 }
@@ -1762,7 +1809,7 @@ static void editor_redo(void) {
              us->entries[us->current].group == group);
 
     doc->sel_anchor = -1;
-    doc->modified = 1;
+    doc->modified = (us->current != us->save_point);
     recalc_lines(doc);
     update_stats(doc);
 }
@@ -1787,12 +1834,12 @@ static void editor_copy(void) {
     text[len] = 0;
 
     if (OpenClipboard(g_editor.hwnd)) {
-        EmptyClipboard();
         HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (len + 1) * sizeof(wchar_t));
         if (hg) {
             wchar_t *dest = (wchar_t *)GlobalLock(hg);
             memcpy(dest, text, (len + 1) * sizeof(wchar_t));
             GlobalUnlock(hg);
+            EmptyClipboard();
             SetClipboardData(CF_UNICODETEXT, hg);
         }
         CloseClipboard();
@@ -1895,13 +1942,15 @@ static void search_update_matches(void) {
 
     int qlen = (int)wcslen(ss->query);
     bpos tlen = gb_length(&doc->gb);
+    if (tlen < (bpos)qlen) return; /* text shorter than query — no matches */
     int cap = 256;
-    ss->match_positions = (int *)malloc(cap * sizeof(int));
+    ss->match_positions = (bpos *)malloc(cap * sizeof(bpos));
+    if (!ss->match_positions) return;
 
     /* Extract and pre-lowercase full text once — eliminates per-char
      * towlower in inner loop and enables first-char fast reject */
     wchar_t *text = (wchar_t *)malloc((tlen + 1) * sizeof(wchar_t));
-    if (!text) return;
+    if (!text) { free(ss->match_positions); ss->match_positions = NULL; return; }
     gb_copy_range(&doc->gb, 0, tlen, text);
 
     /* Lowercase text and query once upfront */
@@ -1911,13 +1960,15 @@ static void search_update_matches(void) {
     lower_query[qlen] = 0;
 
     wchar_t first_ch = lower_query[0];
-    for (bpos i = 0; i <= tlen - qlen; i++) {
+    for (bpos i = 0; i <= tlen - (bpos)qlen; i++) {
         /* Fast reject on first character */
         if (text[i] != first_ch) continue;
         if (wcsncmp(text + i, lower_query, qlen) == 0) {
             if (ss->match_count >= cap) {
                 cap *= 2;
-                ss->match_positions = (int *)realloc(ss->match_positions, cap * sizeof(int));
+                bpos *tmp = (bpos *)realloc(ss->match_positions, cap * sizeof(bpos));
+                if (!tmp) break;
+                ss->match_positions = tmp;
             }
             ss->match_positions[ss->match_count++] = i;
         }
@@ -1925,8 +1976,18 @@ static void search_update_matches(void) {
 
     free(text);
 
-    if (ss->match_count > 0 && ss->current_match >= ss->match_count)
-        ss->current_match = 0;
+    /* Snap current_match to the match nearest the cursor */
+    if (ss->match_count > 0) {
+        if (ss->current_match >= ss->match_count)
+            ss->current_match = 0;
+        bpos cursor = doc->cursor;
+        for (int i = 0; i < ss->match_count; i++) {
+            if (ss->match_positions[i] >= cursor) {
+                ss->current_match = i;
+                break;
+            }
+        }
+    }
 }
 
 static void toggle_search(void) {
@@ -1945,9 +2006,9 @@ static void search_next(void) {
     ss->current_match = (ss->current_match + 1) % ss->match_count;
     Document *doc = current_doc();
     if (doc) {
-        int pos = ss->match_positions[ss->current_match];
+        bpos pos = ss->match_positions[ss->current_match];
         doc->sel_anchor = pos;
-        doc->cursor = pos + (int)wcslen(ss->query);
+        doc->cursor = pos + (bpos)wcslen(ss->query);
         editor_ensure_cursor_visible();
     }
 }
@@ -1958,9 +2019,9 @@ static void search_prev(void) {
     ss->current_match = (ss->current_match - 1 + ss->match_count) % ss->match_count;
     Document *doc = current_doc();
     if (doc) {
-        int pos = ss->match_positions[ss->current_match];
+        bpos pos = ss->match_positions[ss->current_match];
         doc->sel_anchor = pos;
-        doc->cursor = pos + (int)wcslen(ss->query);
+        doc->cursor = pos + (bpos)wcslen(ss->query);
         editor_ensure_cursor_visible();
     }
 }
@@ -1970,7 +2031,7 @@ static void do_replace(void) {
     Document *doc = current_doc();
     if (!doc || ss->match_count == 0) return;
 
-    int pos = ss->match_positions[ss->current_match];
+    bpos pos = ss->match_positions[ss->current_match];
     int qlen = (int)wcslen(ss->query);
     int rlen = (int)wcslen(ss->replace_text);
 
@@ -1978,6 +2039,8 @@ static void do_replace(void) {
     doc->sel_anchor = pos + qlen;
     editor_delete_selection();
     editor_insert_text(ss->replace_text, rlen);
+    /* Move cursor past replacement so search_update_matches snaps to next */
+    doc->cursor = pos + rlen;
     search_update_matches();
 }
 
@@ -1986,16 +2049,18 @@ static void do_replace_all(void) {
     Document *doc = current_doc();
     if (!doc || ss->match_count == 0) return;
 
-    /* Replace from end to start to preserve positions */
     int qlen = (int)wcslen(ss->query);
     int rlen = (int)wcslen(ss->replace_text);
     bpos old_cursor = doc->cursor;
+    bpos diff = rlen - qlen;
 
-    /* Allocate a unique group ID so all entries undo/redo atomically */
+    /* Allocate a unique group ID so all entries undo/redo atomically.
+     * Replace front-to-back, adjusting positions by accumulated offset.
+     * Push undo entries in forward order so LIFO stack replays correctly. */
     int group = ++doc->undo.next_group;
 
-    for (int i = ss->match_count - 1; i >= 0; i--) {
-        int pos = ss->match_positions[i];
+    for (int i = 0; i < ss->match_count; i++) {
+        bpos pos = ss->match_positions[i] + (bpos)i * diff;
 
         /* Push DELETE undo for the original text */
         wchar_t *deleted = gb_extract_alloc(&doc->gb, pos, qlen);
@@ -2010,8 +2075,12 @@ static void do_replace_all(void) {
         undo_push(&doc->undo, UNDO_INSERT, pos, ss->replace_text, rlen, pos, pos + rlen, group);
     }
 
-    /* Clamp cursor to valid range */
+    /* Position cursor at end of last replacement */
     bpos total = gb_length(&doc->gb);
+    if (ss->match_count > 0) {
+        bpos last_pos = ss->match_positions[ss->match_count - 1] + (bpos)(ss->match_count - 1) * diff;
+        doc->cursor = last_pos + rlen;
+    }
     if (doc->cursor > total) doc->cursor = total;
 
     doc->modified = 1;
@@ -2030,8 +2099,8 @@ static void load_file(Document *doc, const wchar_t *path) {
     if (hFile == INVALID_HANDLE_VALUE) return;
 
     LARGE_INTEGER li_size;
-    if (!GetFileSizeEx(hFile, &li_size) || li_size.QuadPart > (LONGLONG)INT_MAX) {
-        /* File too large for our int-based buffer positions */
+    if (!GetFileSizeEx(hFile, &li_size) || li_size.QuadPart > (LONGLONG)(512 * 1024 * 1024)) {
+        /* File too large (>512MB) */
         CloseHandle(hFile);
         return;
     }
@@ -2039,8 +2108,10 @@ static void load_file(Document *doc, const wchar_t *path) {
 
     char *raw = (char *)malloc(size + 1);
     if (!raw) { CloseHandle(hFile); return; }
-    DWORD bytes_read;
-    ReadFile(hFile, raw, (DWORD)size, &bytes_read, NULL);
+    DWORD bytes_read = 0;
+    if (!ReadFile(hFile, raw, (DWORD)size, &bytes_read, NULL)) {
+        free(raw); CloseHandle(hFile); return;
+    }
     raw[bytes_read] = 0;
     CloseHandle(hFile);
     size = (int)bytes_read;
@@ -2056,6 +2127,7 @@ static void load_file(Document *doc, const wchar_t *path) {
     /* Convert to wide chars */
     int wlen = MultiByteToWideChar(CP_UTF8, 0, start, (int)size, NULL, 0);
     wchar_t *wtext = (wchar_t *)malloc((wlen + 1) * sizeof(wchar_t));
+    if (!wtext) { free(raw); return; }
     MultiByteToWideChar(CP_UTF8, 0, start, (int)size, wtext, wlen);
     wtext[wlen] = 0;
     free(raw);
@@ -2123,6 +2195,14 @@ static char *doc_to_utf8(Document *doc, int *out_len) {
     GapBuffer *gb = &doc->gb;
     bpos len = gb_length(gb);
 
+    /* Handle empty document */
+    if (len == 0) {
+        char *empty = (char *)malloc(1);
+        if (empty) empty[0] = 0;
+        *out_len = 0;
+        return empty;
+    }
+
     /* Fast bulk extraction via gb_copy_range */
     wchar_t *text = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
     if (!text) { *out_len = 0; return NULL; }
@@ -2130,7 +2210,7 @@ static char *doc_to_utf8(Document *doc, int *out_len) {
     text[len] = 0;
 
     /* Count newlines for \r\n expansion */
-    int newlines = 0;
+    bpos newlines = 0;
     for (bpos i = 0; i < len; i++) {
         if (text[i] == L'\n') newlines++;
     }
@@ -2161,8 +2241,8 @@ static char *doc_to_utf8(Document *doc, int *out_len) {
  * Returns 1 on success, 0 on failure. */
 static int write_file_atomic(const wchar_t *final_path, const char *data, int data_len) {
     /* Build temp path: final_path + ".tmp~" */
-    wchar_t tmp_path[MAX_PATH + 8];
-    swprintf(tmp_path, MAX_PATH + 8, L"%s.tmp~", final_path);
+    wchar_t tmp_path[MAX_PATH + 16];
+    swprintf(tmp_path, MAX_PATH + 16, L"%s.tmp~", final_path);
 
     /* Write to temp file using Win32 API for flush control */
     HANDLE hFile = CreateFileW(tmp_path, GENERIC_WRITE, 0, NULL,
@@ -2184,8 +2264,8 @@ static int write_file_atomic(const wchar_t *final_path, const char *data, int da
     /* Atomic swap: ReplaceFileW preserves ACLs/streams and creates a .bak~ */
     if (GetFileAttributesW(final_path) != INVALID_FILE_ATTRIBUTES) {
         /* Existing file — use ReplaceFile for atomic swap + backup */
-        wchar_t bak_path[MAX_PATH + 8];
-        swprintf(bak_path, MAX_PATH + 8, L"%s.bak~", final_path);
+        wchar_t bak_path[MAX_PATH + 16];
+        swprintf(bak_path, MAX_PATH + 16, L"%s.bak~", final_path);
         if (ReplaceFileW(final_path, tmp_path, bak_path,
                          REPLACEFILE_IGNORE_MERGE_ERRORS, NULL, NULL)) {
             return 1;
@@ -2213,18 +2293,14 @@ static void save_file(Document *doc, const wchar_t *path) {
 
     if (write_file_atomic(path, utf8, utf8len)) {
         doc->modified = 0;
+        doc->undo.save_point = doc->undo.current;
         safe_wcscpy(doc->filepath, MAX_PATH, path);
         const wchar_t *slash = wcsrchr(path, L'\\');
         if (!slash) slash = wcsrchr(path, L'/');
         safe_wcscpy(doc->title, 64, slash ? slash + 1 : path);
 
         /* Clean up autosave shadow since we just saved successfully */
-        for (int i = 0; i < g_editor.tab_count; i++) {
-            if (g_editor.tabs[i] == doc) {
-                autosave_delete_for_doc(doc, i);
-                break;
-            }
-        }
+        autosave_delete_for_doc(doc);
         doc->autosave_mutation_snapshot = doc->gb.mutation;
     }
     free(utf8);
@@ -2258,15 +2334,15 @@ static unsigned int path_hash(const wchar_t *path) {
     return h;
 }
 
-static void autosave_path_for_doc(Document *doc, int tab_idx, wchar_t *out) {
+static void autosave_path_for_doc(Document *doc, wchar_t *out) {
     autosave_ensure_dir();
     if (doc->filepath[0]) {
         unsigned int h = path_hash(doc->filepath);
-        swprintf(out, MAX_PATH, L"%s\\%08x.pctmp", g_editor.autosave_dir, h);
+        swprintf(out, MAX_PATH + 32, L"%s\\%08x.pctmp", g_editor.autosave_dir, h);
     } else {
-        /* Untitled tabs: use tab index + session time for uniqueness */
-        swprintf(out, MAX_PATH, L"%s\\untitled_%d_%u.pctmp",
-                 g_editor.autosave_dir, tab_idx, g_editor.session_start_time);
+        /* Untitled tabs: use per-document autosave_id for stable filenames */
+        swprintf(out, MAX_PATH + 32, L"%s\\untitled_%u_%u.pctmp",
+                 g_editor.autosave_dir, doc->autosave_id, g_editor.session_start_time);
     }
 }
 
@@ -2289,7 +2365,7 @@ static int json_escape_path(const char *src, char *dst, int dst_size) {
     return j;
 }
 
-static void autosave_write(Document *doc, int tab_idx) {
+static void autosave_write(Document *doc) {
     int utf8len;
     char *utf8 = doc_to_utf8(doc, &utf8len);
     if (!utf8) return;
@@ -2304,6 +2380,8 @@ static void autosave_write(Document *doc, int tab_idx) {
     int hdr_len = snprintf(header, sizeof(header),
         "{\"path\":\"%s\",\"time\":%u,\"chars\":%lld}\n",
         escaped_path, (unsigned)GetTickCount(), (long long)gb_length(&doc->gb));
+    if (hdr_len < 0 || hdr_len >= (int)sizeof(header))
+        hdr_len = (int)sizeof(header) - 1; /* clamp to actual written bytes */
 
     /* Combine header + content into one buffer */
     int total = 4 + hdr_len + utf8len;
@@ -2320,8 +2398,8 @@ static void autosave_write(Document *doc, int tab_idx) {
     free(utf8);
 
     /* Write atomically to shadow path */
-    wchar_t shadow_path[MAX_PATH];
-    autosave_path_for_doc(doc, tab_idx, shadow_path);
+    wchar_t shadow_path[MAX_PATH + 32];
+    autosave_path_for_doc(doc, shadow_path);
     write_file_atomic(shadow_path, buf, total);
     free(buf);
 
@@ -2336,13 +2414,13 @@ static void autosave_tick(void) {
         if (!doc->modified) continue;
         /* Skip if content hasn't actually changed since last autosave */
         if (doc->gb.mutation == doc->autosave_mutation_snapshot) continue;
-        autosave_write(doc, i);
+        autosave_write(doc);
     }
 }
 
-static void autosave_delete_for_doc(Document *doc, int tab_idx) {
-    wchar_t shadow_path[MAX_PATH];
-    autosave_path_for_doc(doc, tab_idx, shadow_path);
+static void autosave_delete_for_doc(Document *doc) {
+    wchar_t shadow_path[MAX_PATH + 32];
+    autosave_path_for_doc(doc, shadow_path);
     DeleteFileW(shadow_path);
 }
 
@@ -2424,7 +2502,7 @@ static void autosave_recover(void) {
                       ((unsigned char)raw[2] << 16) |
                       ((unsigned char)raw[3] << 24);
 
-        if (hdr_len <= 0 || hdr_len > 1024 || 4 + hdr_len > (int)bytes_read) {
+        if (hdr_len <= 0 || hdr_len >= 1024 || 4 + hdr_len > (int)bytes_read) {
             free(raw); DeleteFileW(full); continue;
         }
 
@@ -2463,6 +2541,7 @@ static void autosave_recover(void) {
 
             int wlen = MultiByteToWideChar(CP_UTF8, 0, content, content_len, NULL, 0);
             wchar_t *wtext = (wchar_t *)malloc((wlen + 1) * sizeof(wchar_t));
+            if (!wtext) { free(raw); DeleteFileW(full); continue; }
             MultiByteToWideChar(CP_UTF8, 0, content, content_len, wtext, wlen);
             wtext[wlen] = 0;
 
@@ -2533,7 +2612,7 @@ static int prompt_save_doc(int tab_idx) {
         return save_file_dialog_for_doc(doc);
     } else if (result == IDNO) {
         /* Discard — delete autosave shadow */
-        autosave_delete_for_doc(doc, tab_idx);
+        autosave_delete_for_doc(doc);
         return 1;
     }
     return 0; /* IDCANCEL */
@@ -2647,7 +2726,7 @@ static void close_tab(int idx) {
     if (idx < 0 || idx >= g_editor.tab_count) return;
     /* Prompt for unsaved changes */
     if (!prompt_save_doc(idx)) return; /* user cancelled */
-    autosave_delete_for_doc(g_editor.tabs[idx], idx);
+    autosave_delete_for_doc(g_editor.tabs[idx]);
     doc_free(g_editor.tabs[idx]);
     for (int i = idx; i < g_editor.tab_count - 1; i++) {
         g_editor.tabs[i] = g_editor.tabs[i + 1];
@@ -2706,13 +2785,13 @@ static void render_titlebar(HDC hdc) {
     SetBkMode(hdc, TRANSPARENT);
 
     /* App icon/name */
-    wchar_t title[128];
+    wchar_t title[256];
     Document *doc = current_doc();
     if (doc) {
-        swprintf(title, 128, L"  \x270E  PROSE_CODE  \x2014  %s%s",
+        swprintf(title, 256, L"  \x270E  PROSE_CODE  \x2014  %s%s",
                  doc->title, doc->modified ? L" \x2022" : L"");
     } else {
-        wcscpy(title, L"  \x270E  PROSE_CODE");
+        safe_wcscpy(title, 256, L"  \x270E  PROSE_CODE");
     }
     draw_text(hdc, DPI(8), (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_LAVENDER);
 
@@ -2759,8 +2838,8 @@ static void render_tabbar(HDC hdc) {
     int x = DPI(8);
     for (int i = 0; i < g_editor.tab_count; i++) {
         Document *doc = g_editor.tabs[i];
-        wchar_t label[80];
-        swprintf(label, 80, L"%s%s", doc->title, doc->modified ? L" \x2022" : L"");
+        wchar_t label[128];
+        swprintf(label, 128, L"%s%s", doc->title, doc->modified ? L" \x2022" : L"");
         int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
         if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
         if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
@@ -2837,7 +2916,6 @@ static void render_statusbar(HDC hdc) {
         wchar_t tbuf[32];
         swprintf(tbuf, 32, L"\x263C %s", tname);
         SIZE tsz;
-        GetTextExtentPoint32W(hdc, right, (int)wcslen(right), &tsz);
         GetTextExtentPoint32W(hdc, tbuf, (int)wcslen(tbuf), &tsz);
         draw_text(hdc, g_editor.client_w / 2 + 40, y + (DPI(STATUSBAR_H) - DPI(12)) / 2,
                   tbuf, (int)wcslen(tbuf), CLR_OVERLAY0);
@@ -2860,9 +2938,11 @@ static void render_searchbar(HDC hdc) {
     /* Border */
     HPEN pen = CreatePen(PS_SOLID, 1, CLR_SURFACE1);
     HBRUSH hollow = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
-    SelectObject(hdc, pen);
-    SelectObject(hdc, hollow);
+    HPEN old_pen = (HPEN)SelectObject(hdc, pen);
+    HBRUSH old_brush = (HBRUSH)SelectObject(hdc, hollow);
     RoundRect(hdc, x, y, x + bar_w, y + bar_h, DPI(10), DPI(10));
+    SelectObject(hdc, old_pen);
+    SelectObject(hdc, old_brush);
     DeleteObject(pen);
 
     SelectObject(hdc, g_editor.font_ui_small);
@@ -3751,7 +3831,7 @@ static void render_editor(HDC hdc) {
              * per gap — catastrophic for large files. Instead, walk from the last known
              * state through intermediate lines using the O(line_len) per-line advancer. */
             if (doc->mode == MODE_CODE && mm_prev_line >= 0 && i != mm_prev_line + stride) {
-                for (int skip = mm_prev_line + 1; skip < i; skip++)
+                for (int skip = mm_prev_line + 1; skip < i; skip++) {
                     bpos sls = lc_line_start(&doc->lc, skip);
                     bpos sle = lc_line_end(&doc->lc, &doc->gb, skip);
                     mm_in_block_comment = advance_block_comment_state_for_line(&doc->gb, sls, sle, mm_in_block_comment);
@@ -4258,6 +4338,9 @@ static int scrollbar_thumb_geometry(int *out_thumb_y, int *out_thumb_h, int *out
     int thumb_h = (edit_h * edit_h) / total_h;
     if (thumb_h < 30) thumb_h = 30;
     int thumb_y = edit_y + (doc->scroll_y * (edit_h - thumb_h)) / (total_h - edit_h);
+    /* Clamp thumb within the scrollbar track */
+    if (thumb_y < edit_y) thumb_y = edit_y;
+    if (thumb_y + thumb_h > edit_y + edit_h) thumb_y = edit_y + edit_h - thumb_h;
 
     if (out_thumb_y) *out_thumb_y = thumb_y;
     if (out_thumb_h) *out_thumb_h = thumb_h;
@@ -4267,7 +4350,13 @@ static int scrollbar_thumb_geometry(int *out_thumb_y, int *out_thumb_h, int *out
 /* Word boundary helpers */
 static bpos word_start(GapBuffer *gb, bpos pos) {
     if (pos <= 0) return 0;
-    pos--;
+    /* Skip non-word characters first (spaces, punctuation) */
+    while (pos > 0) {
+        wchar_t c = gb_char_at(gb, pos - 1);
+        if (iswalnum(c) || c == L'_') break;
+        pos--;
+    }
+    /* Then skip the word itself */
     while (pos > 0) {
         wchar_t c = gb_char_at(gb, pos - 1);
         if (!iswalnum(c) && c != L'_') break;
@@ -4375,11 +4464,11 @@ static bpos find_matching_bracket(GapBuffer *gb, bpos pos) {
     }
 
     /* Cache: tokenize each line at most once during the scan */
-    int cached_line = -1;
+    bpos cached_line = -1;
     SynToken cached_tokens[2048];
 
     int depth = 1;
-    int i = pos + dir;
+    bpos i = pos + dir;
     while (i >= 0 && i < len && depth > 0) {
         wchar_t ch = gb_char_at(gb, i);
         if (ch == c || ch == match) {
@@ -4387,18 +4476,21 @@ static bpos find_matching_bracket(GapBuffer *gb, bpos pos) {
             bpos line = lc_line_of(&current_doc()->lc, i);
             bpos ls = lc_line_start(&current_doc()->lc, line);
             bpos le = lc_line_end(&current_doc()->lc, &current_doc()->gb, line);
-            int ll = le - ls;
+            bpos ll = le - ls;
             if (ll > 0 && ll <= 2048) {
                 /* Tokenize this line (cached per-line) */
                 if (line != cached_line) {
-                    wchar_t lc[2048];
-                    gb_copy_range(gb, ls, ll, lc);
+                    wchar_t lbuf[2048];
+                    gb_copy_range(gb, ls, ll, lbuf);
                     int bc_state = compute_block_comment_state(gb, ls);
-                    tokenize_line_code(lc, ll, cached_tokens, bc_state);
+                    tokenize_line_code(lbuf, (int)ll, cached_tokens, bc_state);
                     cached_line = line;
                 }
-                SynToken t = cached_tokens[i - ls];
-                if (t == TOK_STRING || t == TOK_COMMENT) { i += dir; continue; }
+                bpos idx = i - ls;
+                if (idx >= 0 && idx < 2048) {
+                    SynToken t = cached_tokens[idx];
+                    if (t == TOK_STRING || t == TOK_COMMENT) { i += dir; continue; }
+                }
             }
             if (ch == c) depth++;
             else if (ch == match) depth--;
@@ -4486,14 +4578,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         /* Recreate back buffer */
         HDC hdc = GetDC(hwnd);
         if (g_editor.hdc_back) {
-            /* Deselect our bitmap before deleting it */
-            SelectObject(g_editor.hdc_back, GetStockObject(NULL_PEN));
+            /* Restore original bitmap before deleting ours */
+            SelectObject(g_editor.hdc_back, g_editor.bmp_back_old);
             DeleteObject(g_editor.bmp_back);
             DeleteDC(g_editor.hdc_back);
         }
+        if (g_editor.client_w <= 0 || g_editor.client_h <= 0) {
+            g_editor.hdc_back = NULL;
+            g_editor.bmp_back = NULL;
+            ReleaseDC(hwnd, hdc);
+            return 0;
+        }
         g_editor.hdc_back = CreateCompatibleDC(hdc);
         g_editor.bmp_back = CreateCompatibleBitmap(hdc, g_editor.client_w, g_editor.client_h);
-        SelectObject(g_editor.hdc_back, g_editor.bmp_back);
+        g_editor.bmp_back_old = (HBITMAP)SelectObject(g_editor.hdc_back, g_editor.bmp_back);
         ReleaseDC(hwnd, hdc);
         InvalidateRect(hwnd, NULL, FALSE);
         return 0;
@@ -4622,10 +4720,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 static int search_tick = 0;
                 if (++search_tick >= 33) { /* ~530ms at 16ms/tick */
                     search_tick = 0;
-                    int bar_w = 460;
-                    int sx = g_editor.client_w - bar_w - 24;
-                    int sy = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H) + 8;
-                    RECT sr = { sx, sy, sx + bar_w, sy + 80 };
+                    int bar_w = DPI(460);
+                    int sx = g_editor.client_w - bar_w - DPI(24);
+                    int sy = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H) + DPI(8);
+                    RECT sr = { sx, sy, sx + bar_w, sy + DPI(80) };
                     InvalidateRect(hwnd, &sr, FALSE);
                 }
             }
@@ -4649,7 +4747,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     cline_start = lc_line_start(&blink_doc->lc, cline);
                 }
                 int cy = edit_y + cline * lh - blink_doc->scroll_y;
-                int cx = gw + col_to_pixel_x(&blink_doc->gb, cline_start, ccol, cw);
+                int cx = gw + col_to_pixel_x(&blink_doc->gb, cline_start, ccol, cw) - blink_doc->scroll_x;
                 RECT cr = { cx - 1, cy, cx + DPI(CURSOR_WIDTH) + 2, cy + lh };
                 InvalidateRect(hwnd, &cr, FALSE);
             }
@@ -4719,6 +4817,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int delta = GET_WHEEL_DELTA_WPARAM(wParam);
         doc->target_scroll_x += (delta / 120) * g_editor.char_width * 8;
         if (doc->target_scroll_x < 0) doc->target_scroll_x = 0;
+        { int max_x = 300 * g_editor.char_width; /* reasonable max */
+          if (doc->target_scroll_x > max_x) doc->target_scroll_x = max_x; }
         g_editor.scroll_only_repaint = 1;
         start_scroll_animation();
         invalidate_editor_region(hwnd);
@@ -4930,11 +5030,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int shift = GetKeyState(VK_SHIFT) & 0x8000;
 
             if (GetKeyState(VK_CONTROL) & 0x8000) {
-                /* Ctrl+click: word select */
+                /* Ctrl+click: word select (only if clicking on a word character) */
                 Document *doc = current_doc();
                 if (doc) {
-                    doc->sel_anchor = word_start(&doc->gb, pos);
-                    doc->cursor = word_end(&doc->gb, pos);
+                    bpos tlen = gb_length(&doc->gb);
+                    wchar_t ch = (pos < tlen) ? gb_char_at(&doc->gb, pos) : 0;
+                    if (iswalnum(ch) || ch == L'_') {
+                        doc->sel_anchor = word_start(&doc->gb, pos);
+                        doc->cursor = word_end(&doc->gb, pos);
+                    } else {
+                        /* On whitespace/punctuation: just place cursor, no selection */
+                        doc->sel_anchor = -1;
+                        doc->cursor = pos;
+                    }
                 }
             } else {
                 editor_move_cursor(pos, shift);
@@ -5066,7 +5174,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         if (g_editor.mouse_captured && (wParam & MK_LBUTTON)) {
-            bpos pos = mouse_to_pos(mx, my);
+            /* Clamp mx to the text editing area to avoid minimap coordinates */
+            int clamp_mx = mx;
+            int max_text_x = g_editor.client_w - DPI(SCROLLBAR_W);
+            if (g_editor.show_minimap) max_text_x -= DPI(MINIMAP_W);
+            if (clamp_mx > max_text_x) clamp_mx = max_text_x;
+            bpos pos = mouse_to_pos(clamp_mx, my);
             Document *doc = current_doc();
             if (doc) {
                 if (doc->sel_anchor < 0) doc->sel_anchor = doc->cursor;
@@ -5190,6 +5303,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case VK_LEFT:
             if (ctrl) {
                 editor_move_cursor(word_start(&doc->gb, doc->cursor), shift);
+            } else if (!shift && has_selection(doc)) {
+                /* Collapse selection to its start */
+                bpos sel_s = selection_start(doc);
+                doc->sel_anchor = -1;
+                doc->cursor = sel_s;
             } else {
                 editor_move_cursor(doc->cursor - 1, shift);
             }
@@ -5201,6 +5319,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case VK_RIGHT:
             if (ctrl) {
                 editor_move_cursor(word_end(&doc->gb, doc->cursor), shift);
+            } else if (!shift && has_selection(doc)) {
+                /* Collapse selection to its end */
+                bpos sel_e = selection_end(doc);
+                doc->sel_anchor = -1;
+                doc->cursor = sel_e;
             } else {
                 editor_move_cursor(doc->cursor + 1, shift);
             }
@@ -5224,10 +5347,12 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         bpos col = doc->cursor - ls;
                         int group = ++doc->undo.next_group;
 
+                        /* Capture prev_ls before deleting (line cache will be stale after) */
+                        bpos prev_ls = lc_line_start(&doc->lc, line - 1);
+
                         /* Record the deletion */
                         undo_push(&doc->undo, UNDO_DELETE, ls, line_text, full_len, old_cursor, old_cursor, group);
                         gb_delete(&doc->gb, ls, full_len);
-                        bpos prev_ls = lc_line_start(&doc->lc, line - 1);
 
                         /* If original line had no trailing newline, add one */
                         if (!has_nl) {
@@ -5460,8 +5585,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             } else if (ctrl) {
                 /* Ctrl+Delete: delete to end of word */
                 if (!has_selection(doc)) {
+                    bpos text_len = gb_length(&doc->gb);
+                    if (doc->cursor >= text_len) return 0;
                     bpos end = word_end(&doc->gb, doc->cursor);
-                    if (end == doc->cursor && doc->cursor < gb_length(&doc->gb)) end++;
+                    if (end == doc->cursor && doc->cursor < text_len) end++;
+                    if (end > text_len) end = text_len;
                     doc->sel_anchor = doc->cursor;
                     doc->cursor = end;
                 }
@@ -5477,8 +5605,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (ctrl) {
                 /* Ctrl+Backspace: delete to start of word */
                 if (!has_selection(doc)) {
+                    if (doc->cursor <= 0) return 0;
                     bpos start = word_start(&doc->gb, doc->cursor);
                     if (start == doc->cursor && doc->cursor > 0) start--;
+                    if (start < 0) start = 0;
                     doc->sel_anchor = doc->cursor;
                     doc->cursor = start;
                 }
@@ -5525,7 +5655,52 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case VK_TAB:
             if (g_editor.search.active) return 0;
-            if (doc->mode == MODE_CODE) {
+            if (doc->mode == MODE_CODE && has_selection(doc)) {
+                /* Block indent/de-indent selected lines */
+                bpos s = selection_start(doc);
+                bpos e = selection_end(doc);
+                bpos first_line = pos_to_line(doc, s);
+                bpos last_line = pos_to_line(doc, e);
+                if (e == lc_line_start(&doc->lc, last_line) && last_line > first_line)
+                    last_line--; /* don't indent line if selection ends at its start */
+                int group = ++doc->undo.next_group;
+                if (shift) {
+                    /* Shift+Tab: de-indent */
+                    bpos offset = 0;
+                    for (bpos ln = first_line; ln <= last_line; ln++) {
+                        bpos ls = lc_line_start(&doc->lc, ln) + offset;
+                        int spaces = 0;
+                        while (spaces < 4 && gb_char_at(&doc->gb, ls + spaces) == L' ') spaces++;
+                        if (spaces > 0) {
+                            wchar_t *del = gb_extract_alloc(&doc->gb, ls, spaces);
+                            if (del) {
+                                undo_push(&doc->undo, UNDO_DELETE, ls, del, spaces, doc->cursor, doc->cursor, group);
+                                free(del);
+                            }
+                            gb_delete(&doc->gb, ls, spaces);
+                            offset -= spaces;
+                        }
+                    }
+                    doc->cursor += offset;
+                    if (doc->cursor < 0) doc->cursor = 0;
+                    doc->sel_anchor = lc_line_start(&doc->lc, first_line);
+                } else {
+                    /* Tab: indent */
+                    bpos offset = 0;
+                    for (bpos ln = first_line; ln <= last_line; ln++) {
+                        bpos ls = lc_line_start(&doc->lc, ln) + offset;
+                        gb_insert(&doc->gb, ls, L"    ", 4);
+                        undo_push(&doc->undo, UNDO_INSERT, ls, L"    ", 4, doc->cursor, doc->cursor, group);
+                        offset += 4;
+                        lc_rebuild(&doc->lc, &doc->gb);
+                    }
+                    doc->cursor += offset;
+                    doc->sel_anchor = lc_line_start(&doc->lc, first_line);
+                }
+                doc->modified = 1;
+                recalc_lines(doc);
+                update_stats(doc);
+            } else if (doc->mode == MODE_CODE) {
                 editor_insert_text(L"    ", 4);
             } else {
                 editor_insert_char(L'\t');
@@ -5577,19 +5752,31 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bpos line = pos_to_line(doc, doc->cursor);
                 bpos ls = lc_line_start(&doc->lc, line);
                 bpos le = lc_line_end(&doc->lc, &doc->gb, line);
-                int ll = le - ls;
+                bpos ll = le - ls;
                 wchar_t *dup = gb_extract_alloc(&doc->gb, ls, ll);
                 if (dup) {
                     bpos old_cursor = doc->cursor;
                     int group = ++doc->undo.next_group;
+                    bpos insert_at;
+                    int is_last = (line + 1 >= doc->lc.count);
 
-                    gb_insert(&doc->gb, le, L"\n", 1);
-                    undo_push(&doc->undo, UNDO_INSERT, le, L"\n", 1, old_cursor, le + 1 + (doc->cursor - ls), group);
+                    if (is_last) {
+                        /* Last line: insert \n then duplicate at end */
+                        insert_at = le;
+                        gb_insert(&doc->gb, insert_at, L"\n", 1);
+                        undo_push(&doc->undo, UNDO_INSERT, insert_at, L"\n", 1, old_cursor, insert_at + 1 + (doc->cursor - ls), group);
+                        gb_insert(&doc->gb, insert_at + 1, dup, ll);
+                        undo_push(&doc->undo, UNDO_INSERT, insert_at + 1, dup, ll, old_cursor, insert_at + 1 + (doc->cursor - ls), group);
+                    } else {
+                        /* Non-last line: insert after the existing \n (at le + 1, which is start of next line) */
+                        insert_at = le + 1;
+                        gb_insert(&doc->gb, insert_at, dup, ll);
+                        undo_push(&doc->undo, UNDO_INSERT, insert_at, dup, ll, old_cursor, insert_at + (doc->cursor - ls), group);
+                        gb_insert(&doc->gb, insert_at + ll, L"\n", 1);
+                        undo_push(&doc->undo, UNDO_INSERT, insert_at + ll, L"\n", 1, old_cursor, insert_at + (doc->cursor - ls), group);
+                    }
 
-                    gb_insert(&doc->gb, le + 1, dup, ll);
-                    undo_push(&doc->undo, UNDO_INSERT, le + 1, dup, ll, old_cursor, le + 1 + (doc->cursor - ls), group);
-
-                    doc->cursor = le + 1 + (doc->cursor - ls);
+                    doc->cursor = (is_last ? le + 1 : insert_at) + (doc->cursor - ls);
                     doc->modified = 1;
                     recalc_lines(doc);
                     free(dup);
@@ -5951,7 +6138,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
     }
 
     /* Initialize COM for potential future use */
-    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    HRESULT co_hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 
     /* Initialize theme */
     g_theme = THEME_DARK;
@@ -6006,6 +6193,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
 
     g_editor.hwnd = hwnd;
 
+    /* Re-check DPI for the actual window's monitor (may differ from primary) */
+    {
+        typedef UINT (WINAPI *GetDpiForWindowFn)(HWND);
+        GetDpiForWindowFn pGetDpiForWindow = (GetDpiForWindowFn)GetProcAddress(
+            GetModuleHandleW(L"user32.dll"), "GetDpiForWindow");
+        if (pGetDpiForWindow) {
+            UINT wdpi = pGetDpiForWindow(hwnd);
+            if (wdpi > 0) g_dpi_scale = (float)wdpi / 96.0f;
+        }
+    }
+
     /* Dark mode for title bar (use current theme setting) */
     BOOL dark = g_theme.is_dark;
     DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
@@ -6055,7 +6253,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
 
     if (g_spell_checker) g_spell_checker->lpVtbl->Release(g_spell_checker);
     spell_cache_free();
-    CoUninitialize();
+    DestroyIcon(icon);
+    if (SUCCEEDED(co_hr)) CoUninitialize();
     return (int)msg.wParam;
 }
 
