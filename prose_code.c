@@ -213,7 +213,7 @@ static void apply_theme(int index);  /* forward decl — defined after g_editor 
 
 #define TITLEBAR_H       40
 #define TABBAR_H         38
-#define MENUBAR_H        28
+#define MENUBAR_H        0   /* FABs in titlebar now — menu bar eliminated */
 #define STATUSBAR_H      30
 #define GUTTER_PAD       16
 #define LINE_NUM_CHARS   5
@@ -854,6 +854,7 @@ typedef struct {
 #define MENU_ID_THEME       34
 #define MENU_ID_ZOOM_IN     35
 #define MENU_ID_ZOOM_OUT    36
+#define MENU_ID_SPELLCHECK  37
 
 typedef struct {
     const wchar_t *label;
@@ -895,6 +896,7 @@ static const MenuItem g_search_items[] = {
 static const MenuItem g_view_items[] = {
     { L"Toggle Prose/Code",  L"Ctrl+M",        MENU_ID_TOGGLE_MODE },
     { L"Toggle Minimap",     L"Ctrl+Shift+M",  MENU_ID_MINIMAP },
+    { L"Toggle Spellcheck",  L"F7",            MENU_ID_SPELLCHECK },
     { L"Focus Mode",         L"Ctrl+D",        MENU_ID_FOCUS },
     { L"Session Stats",      L"Ctrl+I",        MENU_ID_STATS },
     { NULL, NULL, MENU_ID_SEP },
@@ -965,6 +967,12 @@ typedef struct {
     int menu_open;          /* -1 = closed, 0..3 = which menu dropdown is open */
     int menu_hover_item;    /* hovered item index within open dropdown (-1 = none) */
     int menu_bar_widths[MENU_COUNT]; /* cached pixel widths per menu label */
+
+    /* FAB (floating action buttons) state — titlebar menu triggers */
+    int fab_hover;          /* -1 = none, 0..3 = which FAB is hovered */
+
+    /* Spell check user toggle (separate from g_spell_loaded capability) */
+    int spellcheck_enabled;
 
     /* Perf: skip chrome redraws during smooth scroll — only editor area changes */
     int scroll_only_repaint;
@@ -1206,6 +1214,7 @@ static void spell_cache_insert(const wchar_t *lower, int len, int correct) {
 static int spell_check(const wchar_t *word, int len) {
     if (len <= 1) return 1;
     if (!g_spell_loaded) return 1;
+    if (!g_editor.spellcheck_enabled) return 1;  /* user disabled */
 
     /* Skip words with digits */
     for (int i = 0; i < len; i++) {
@@ -2786,18 +2795,60 @@ static void render_titlebar(HDC hdc) {
     SelectObject(hdc, g_editor.font_title);
     SetBkMode(hdc, TRANSPARENT);
 
-    /* App icon/name */
-    wchar_t title[256];
+    /* ═══════════════════════════════════════════════════════════════
+     * FABs — Floating Action Buttons for menu access (LEFT SIDE)
+     * ═══════════════════════════════════════════════════════════════ */
+    static const wchar_t *fab_icons[MENU_COUNT] = {
+        L"\x2630",  /* File: ☰ hamburger-ish (trigram for heaven) */
+        L"\x270E",  /* Edit: ✎ pencil */
+        L"\x2315",  /* Search: ⌕ telephone recorder (magnifier-like) */
+        L"\x2699",  /* View: ⚙ gear */
+    };
+    
+    int fab_size = DPI(28);
+    int fab_pad = DPI(6);
+    int fab_start_x = DPI(8);
+    int fab_y = (th - fab_size) / 2;
+
+    SelectObject(hdc, g_editor.font_ui_small);
+    for (int i = 0; i < MENU_COUNT; i++) {
+        int fx = fab_start_x + i * (fab_size + fab_pad);
+        
+        /* Background: highlighted if hovered or menu open */
+        COLORREF fab_bg;
+        if (g_editor.menu_open == i) {
+            fab_bg = CLR_ACCENT;
+        } else if (g_editor.fab_hover == i) {
+            fab_bg = g_theme.is_dark ? RGB(50, 50, 62) : RGB(220, 220, 225);
+        } else {
+            fab_bg = g_theme.is_dark ? RGB(38, 38, 46) : RGB(235, 235, 238);
+        }
+        fill_rounded_rect(hdc, fx, fab_y, fab_size, fab_size, fab_size / 2, fab_bg);
+
+        /* Icon */
+        COLORREF icon_clr = (g_editor.menu_open == i) ? 
+            (g_theme.is_dark ? RGB(255, 255, 255) : RGB(255, 255, 255)) : CLR_SUBTEXT;
+        SetTextColor(hdc, icon_clr);
+        RECT fr = { fx, fab_y, fx + fab_size, fab_y + fab_size };
+        DrawTextW(hdc, fab_icons[i], 1, &fr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        
+        /* Store width for hit testing (all same size) */
+        g_editor.menu_bar_widths[i] = fab_size + fab_pad;
+    }
+
+    /* Document name (after FABs) */
+    int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
+    int title_x = fab_start_x + fab_total_w + DPI(12);
+    
+    SelectObject(hdc, g_editor.font_title);
     Document *doc = current_doc();
     if (doc) {
-        swprintf(title, 256, L"  \x270E  PROSE_CODE  \x2014  %s%s",
-                 doc->title, doc->modified ? L" \x2022" : L"");
-    } else {
-        safe_wcscpy(title, 256, L"  \x270E  PROSE_CODE");
+        wchar_t title[256];
+        swprintf(title, 256, L"%s%s", doc->title, doc->modified ? L" \x2022" : L"");
+        draw_text(hdc, title_x, (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_SUBTEXT);
     }
-    draw_text(hdc, DPI(8), (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_LAVENDER);
 
-    /* Window controls */
+    /* Window controls (right side) */
     int bw = DPI(46), bh = th;
     int x = g_editor.client_w - bw * 3;
 
@@ -3431,7 +3482,7 @@ static void render_editor(HDC hdc) {
 
     /* Pre-create spell check pen for prose mode (avoids CreatePen/DeleteObject per line) */
     HPEN spell_pen = NULL;
-    if (doc->mode == MODE_PROSE && g_spell_loaded) {
+    if (doc->mode == MODE_PROSE && g_spell_loaded && g_editor.spellcheck_enabled) {
         spell_pen = CreatePen(PS_DOT, 1, CLR_MISSPELLED);
     }
 
@@ -4104,6 +4155,7 @@ static void menu_execute(int id) {
     case MENU_ID_FIND_NEXT:  search_next(); break;
     case MENU_ID_TOGGLE_MODE: toggle_mode(); break;
     case MENU_ID_MINIMAP:    g_editor.show_minimap = !g_editor.show_minimap; break;
+    case MENU_ID_SPELLCHECK: g_editor.spellcheck_enabled = !g_editor.spellcheck_enabled; break;
     case MENU_ID_FOCUS:      toggle_focus_mode(); break;
     case MENU_ID_STATS:      g_editor.show_stats_screen = !g_editor.show_stats_screen; break;
     case MENU_ID_THEME:      apply_theme(g_theme_index == 0 ? 1 : 0); break;
@@ -4123,37 +4175,11 @@ static void menu_execute(int id) {
 }
 
 /* ═══════════════════════════════════════════════════════════════
- * MENU BAR RENDERING
+ * MENU BAR RENDERING — Now handled by FABs in titlebar
  * ═══════════════════════════════════════════════════════════════ */
 
 static void render_menubar(HDC hdc) {
-    int y = DPI(TITLEBAR_H);
-    int h = DPI(MENUBAR_H);
-    fill_rect(hdc, 0, y, g_editor.client_w, h, CLR_BG_DARK);
-    fill_rect(hdc, 0, y + h - 1, g_editor.client_w, 1, CLR_SURFACE0);
-
-    SelectObject(hdc, g_editor.font_ui_small);
-    SetBkMode(hdc, TRANSPARENT);
-
-    int x = DPI(8);
-    int pad = DPI(16);
-    for (int i = 0; i < MENU_COUNT; i++) {
-        SIZE sz;
-        GetTextExtentPoint32W(hdc, g_menus[i].label, (int)wcslen(g_menus[i].label), &sz);
-        int item_w = sz.cx + pad * 2;
-        g_editor.menu_bar_widths[i] = item_w;
-
-        /* Highlight if this menu is open or hovered */
-        if (g_editor.menu_open == i) {
-            fill_rounded_rect(hdc, x, y + DPI(3), item_w, h - DPI(6), DPI(4),
-                              g_theme.is_dark ? RGB(42, 42, 54) : RGB(210, 210, 215));
-        }
-
-        COLORREF clr = (g_editor.menu_open == i) ? CLR_TEXT : CLR_SUBTEXT;
-        draw_text(hdc, x + pad, y + (h - sz.cy) / 2,
-                  g_menus[i].label, (int)wcslen(g_menus[i].label), clr);
-        x += item_w;
-    }
+    (void)hdc;  /* FABs are rendered in render_titlebar now */
 }
 
 static void render_menu_dropdown(HDC hdc) {
@@ -4165,14 +4191,15 @@ static void render_menu_dropdown(HDC hdc) {
     int dropdown_w = DPI(260);
     int pad_x = DPI(12);
     int shortcut_margin = DPI(80);
+    (void)shortcut_margin; /* suppress warning */
 
-    /* Calculate dropdown position */
-    int bar_x = DPI(8);
-    for (int i = 0; i < g_editor.menu_open; i++)
-        bar_x += g_editor.menu_bar_widths[i];
-
-    int dropdown_x = bar_x;
-    int dropdown_y = DPI(TITLEBAR_H + MENUBAR_H);
+    /* Calculate dropdown position — below the FAB that triggered it (LEFT SIDE) */
+    int fab_size = DPI(28);
+    int fab_pad = DPI(6);
+    int fab_start_x = DPI(8);
+    
+    int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+    int dropdown_y = DPI(TITLEBAR_H);  /* right below titlebar */
 
     /* Calculate total height */
     int total_h = DPI(4); /* top padding */
@@ -4511,6 +4538,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         g_editor.font_size = FONT_SIZE_DEFAULT;
         g_editor.menu_open = -1;
         g_editor.menu_hover_item = -1;
+        g_editor.fab_hover = -1;
+        g_editor.spellcheck_enabled = 1;  /* spell check on by default */
 
         g_editor.font_main = CreateFontW(
             -DPI(g_editor.font_size), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -4840,7 +4869,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         /* Title bar area */
         if (my < DPI(TITLEBAR_H)) {
-            /* Check window control buttons */
+            /* Check window control buttons (rightmost) */
             int bw = DPI(46);
             int x = g_editor.client_w - bw * 3;
             if (mx >= x && mx < x + bw) {
@@ -4860,36 +4889,36 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 return 0;
             }
 
-            /* Drag to move */
+            /* Check FAB clicks (LEFT SIDE of titlebar) */
+            int fab_size = DPI(28);
+            int fab_pad = DPI(6);
+            int fab_start_x = DPI(8);
+            int fab_y = (DPI(TITLEBAR_H) - fab_size) / 2;
+            int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
+            
+            if (mx >= fab_start_x && mx < fab_start_x + fab_total_w &&
+                my >= fab_y && my < fab_y + fab_size) {
+                for (int i = 0; i < MENU_COUNT; i++) {
+                    int fx = fab_start_x + i * (fab_size + fab_pad);
+                    if (mx >= fx && mx < fx + fab_size) {
+                        /* Toggle this menu open/closed */
+                        if (g_editor.menu_open == i) {
+                            g_editor.menu_open = -1;
+                        } else {
+                            g_editor.menu_open = i;
+                            g_editor.menu_hover_item = -1;
+                        }
+                        InvalidateRect(hwnd, NULL, FALSE);
+                        return 0;
+                    }
+                }
+            }
+
+            /* Drag to move (anywhere else in titlebar) */
             g_editor.titlebar_dragging = 1;
             g_editor.drag_start.x = mx;
             g_editor.drag_start.y = my;
             SetCapture(hwnd);
-            return 0;
-        }
-
-        /* Menu bar area */
-        if (my >= DPI(TITLEBAR_H) && my < DPI(TITLEBAR_H + MENUBAR_H)) {
-            int mx2 = DPI(8);
-            for (int i = 0; i < MENU_COUNT; i++) {
-                int mw = g_editor.menu_bar_widths[i];
-                if (mw == 0) mw = DPI(60); /* fallback before first render */
-                if (mx >= mx2 && mx < mx2 + mw) {
-                    /* Toggle this menu open/closed */
-                    if (g_editor.menu_open == i) {
-                        g_editor.menu_open = -1;
-                    } else {
-                        g_editor.menu_open = i;
-                        g_editor.menu_hover_item = -1;
-                    }
-                    InvalidateRect(hwnd, NULL, FALSE);
-                    return 0;
-                }
-                mx2 += mw;
-            }
-            /* Clicked on menu bar but not on a label — close any open menu */
-            g_editor.menu_open = -1;
-            InvalidateRect(hwnd, NULL, FALSE);
             return 0;
         }
 
@@ -4900,11 +4929,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int item_h = DPI(26);
             int sep_h = DPI(9);
             int dropdown_w = DPI(260);
-            int bar_x2 = DPI(8);
-            for (int i = 0; i < g_editor.menu_open; i++)
-                bar_x2 += g_editor.menu_bar_widths[i];
-            int dropdown_x = bar_x2;
-            int dropdown_y = DPI(TITLEBAR_H + MENUBAR_H);
+            
+            /* FAB-based dropdown position (LEFT SIDE) */
+            int fab_size = DPI(28);
+            int fab_pad = DPI(6);
+            int fab_start_x = DPI(8);
+            int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+            int dropdown_y = DPI(TITLEBAR_H);
 
             /* Calculate total dropdown height */
             int total_dd_h = DPI(4);
@@ -5089,23 +5120,34 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
 
-        /* Menu bar hover: switch menus when one is open */
-        if (g_editor.menu_open >= 0 && my >= DPI(TITLEBAR_H) && my < DPI(TITLEBAR_H + MENUBAR_H)) {
-            int mx2 = DPI(8);
-            for (int i = 0; i < MENU_COUNT; i++) {
-                int mw = g_editor.menu_bar_widths[i];
-                if (mw == 0) mw = DPI(60);
-                if (mx >= mx2 && mx < mx2 + mw) {
-                    if (g_editor.menu_open != i) {
-                        g_editor.menu_open = i;
-                        g_editor.menu_hover_item = -1;
-                        InvalidateRect(hwnd, NULL, FALSE);
+        /* FAB hover tracking in titlebar (LEFT SIDE) */
+        int old_fab_hover = g_editor.fab_hover;
+        g_editor.fab_hover = -1;
+        if (my < DPI(TITLEBAR_H)) {
+            int fab_size = DPI(28);
+            int fab_pad = DPI(6);
+            int fab_start_x = DPI(8);
+            int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
+            int fab_y = (DPI(TITLEBAR_H) - fab_size) / 2;
+            
+            if (mx >= fab_start_x && mx < fab_start_x + fab_total_w &&
+                my >= fab_y && my < fab_y + fab_size) {
+                for (int i = 0; i < MENU_COUNT; i++) {
+                    int fx = fab_start_x + i * (fab_size + fab_pad);
+                    if (mx >= fx && mx < fx + fab_size) {
+                        g_editor.fab_hover = i;
+                        /* If a menu is open and we hover a different FAB, switch to it */
+                        if (g_editor.menu_open >= 0 && g_editor.menu_open != i) {
+                            g_editor.menu_open = i;
+                            g_editor.menu_hover_item = -1;
+                        }
+                        break;
                     }
-                    break;
                 }
-                mx2 += mw;
             }
         }
+        if (old_fab_hover != g_editor.fab_hover)
+            InvalidateRect(hwnd, NULL, FALSE);
 
         /* Menu dropdown hover tracking */
         if (g_editor.menu_open >= 0) {
@@ -5113,11 +5155,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int item_h = DPI(26);
             int sep_h = DPI(9);
             int dropdown_w = DPI(260);
-            int bar_x2 = DPI(8);
-            for (int i = 0; i < g_editor.menu_open; i++)
-                bar_x2 += g_editor.menu_bar_widths[i];
-            int dropdown_x = bar_x2;
-            int dropdown_y = DPI(TITLEBAR_H + MENUBAR_H);
+            
+            /* FAB-based dropdown position (LEFT SIDE) */
+            int fab_size = DPI(28);
+            int fab_pad = DPI(6);
+            int fab_start_x = DPI(8);
+            int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+            int dropdown_y = DPI(TITLEBAR_H);
 
             int old_hover = g_editor.menu_hover_item;
             g_editor.menu_hover_item = -1;
@@ -5818,6 +5862,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         } break;
         case 'I': if (ctrl) { g_editor.show_stats_screen = !g_editor.show_stats_screen; InvalidateRect(hwnd, NULL, FALSE); return 0; } break;
         case 'T': if (ctrl) { apply_theme(g_theme_index == 0 ? 1 : 0); return 0; } break;
+        case VK_F7: g_editor.spellcheck_enabled = !g_editor.spellcheck_enabled; InvalidateRect(hwnd, NULL, FALSE); return 0;
         }
 
         /* Ctrl+Tab */
