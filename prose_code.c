@@ -4936,7 +4936,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         if (my >= DPI(TITLEBAR_H + MENUBAR_H) && my < DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H)) {
             int tx = DPI(8);
             for (int i = 0; i < g_editor.tab_count; i++) {
-                int tw = (int)wcslen(g_editor.tabs[i]->title) * DPI(8) + DPI(TAB_PAD) * 2;
+                wchar_t label[128];
+                swprintf(label, 128, L"%s%s", g_editor.tabs[i]->title, g_editor.tabs[i]->modified ? L" \x2022" : L"");
+                int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
                 if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
                 if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
 
