@@ -3731,7 +3731,7 @@ static void render_editor(HDC hdc) {
              * per gap — catastrophic for large files. Instead, walk from the last known
              * state through intermediate lines using the O(line_len) per-line advancer. */
             if (doc->mode == MODE_CODE && mm_prev_line >= 0 && i != mm_prev_line + stride) {
-                for (int skip = mm_prev_line + stride; skip < i; skip += stride) {
+                for (int skip = mm_prev_line + 1; skip < i; skip++)
                     bpos sls = lc_line_start(&doc->lc, skip);
                     bpos sle = lc_line_end(&doc->lc, &doc->gb, skip);
                     mm_in_block_comment = advance_block_comment_state_for_line(&doc->gb, sls, sle, mm_in_block_comment);
@@ -6025,3 +6025,4 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
     CoUninitialize();
     return (int)msg.wParam;
 }
+
