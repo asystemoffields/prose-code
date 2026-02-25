@@ -1830,6 +1830,7 @@ static void editor_copy(void) {
     bpos len = e - s;
 
     wchar_t *text = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
+    if (!text) return;
     gb_copy_range(&doc->gb, s, len, text);
     text[len] = 0;
 
@@ -1861,6 +1862,7 @@ static void editor_paste(void) {
             int len = (int)wcslen(text);
             /* Convert \r\n to \n */
             wchar_t *clean = (wchar_t *)malloc((len + 1) * sizeof(wchar_t));
+            if (!clean) { GlobalUnlock(hg); CloseClipboard(); return; }
             int j = 0;
             for (int i = 0; i < len; i++) {
                 if (text[i] == L'\r') continue;
@@ -6259,4 +6261,3 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
     if (SUCCEEDED(co_hr)) CoUninitialize();
     return (int)msg.wParam;
 }
-
