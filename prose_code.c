@@ -964,6 +964,7 @@ static void recalc_lines(Document *doc);
 static void render(HDC hdc);
 static void open_file_dialog(void);
 static void save_file_dialog(void);
+static int  save_file_dialog_for_doc(Document *doc);
 static void save_current_file(void);
 static void new_tab(void);
 static void close_tab(int idx);
@@ -2529,12 +2530,7 @@ static int prompt_save_doc(int tab_idx) {
     int result = MessageBoxW(g_editor.hwnd, msg, L"Prose_Code",
                              MB_YESNOCANCEL | MB_ICONWARNING);
     if (result == IDYES) {
-        if (doc->filepath[0]) {
-            save_file(doc, doc->filepath);
-        } else {
-            save_file_dialog();
-        }
-        return 1;
+        return save_file_dialog_for_doc(doc);
     } else if (result == IDNO) {
         /* Discard — delete autosave shadow */
         autosave_delete_for_doc(doc, tab_idx);
@@ -2601,6 +2597,30 @@ static void save_file_dialog(void) {
     if (GetSaveFileNameW(&ofn)) {
         save_file(doc, path);
     }
+}
+
+/* Save a specific document, prompting for path if needed.
+ * Returns: 1 = saved successfully, 0 = cancelled or failed */
+static int save_file_dialog_for_doc(Document *doc) {
+    if (!doc) return 0;
+
+    if (doc->filepath[0]) {
+        save_file(doc, doc->filepath);
+        return doc->modified ? 0 : 1;
+    }
+
+    wchar_t path[MAX_PATH] = {0};
+    OPENFILENAMEW ofn = {0};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_editor.hwnd;
+    ofn.lpstrFilter = L"All Files\0*.*\0Text Files\0*.txt\0Markdown\0*.md\0\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_OVERWRITEPROMPT;
+
+    if (!GetSaveFileNameW(&ofn)) return 0; /* user cancelled */
+    save_file(doc, path);
+    return doc->modified ? 0 : 1;
 }
 
 static void save_current_file(void) {
@@ -5110,6 +5130,19 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         int ctrl = GetKeyState(VK_CONTROL) & 0x8000;
         int shift = GetKeyState(VK_SHIFT) & 0x8000;
         int alt = GetKeyState(VK_MENU) & 0x8000;
+
+        /* Swallow Backspace/Delete while search UI is active —
+         * prevent them from editing the document text underneath. */
+        if (g_editor.search.active && (wParam == VK_BACK || wParam == VK_DELETE)) {
+            wchar_t *target = (g_editor.search.replace_active && g_editor.search.replace_focused)
+                              ? g_editor.search.replace_text
+                              : g_editor.search.query;
+            int n = (int)wcslen(target);
+            if (n > 0) target[n - 1] = 0;
+            if (target == g_editor.search.query) search_update_matches();
+            InvalidateRect(hwnd, NULL, FALSE);
+            return 0;
+        }
 
         /* Handle search mode input */
         if (g_editor.search.active && !ctrl) {
