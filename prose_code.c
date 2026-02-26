@@ -2253,7 +2253,7 @@ static char *doc_to_utf8(Document *doc, int *out_len) {
 static int write_file_atomic(const wchar_t *final_path, const char *data, int data_len) {
     /* Build temp path: final_path + ".tmp~" */
     wchar_t tmp_path[MAX_PATH + 16];
-    swprintf(tmp_path, MAX_PATH + 16, L"%s.tmp~", final_path);
+    swprintf(tmp_path, MAX_PATH + 16, L"%ls.tmp~", final_path);
 
     /* Write to temp file using Win32 API for flush control */
     HANDLE hFile = CreateFileW(tmp_path, GENERIC_WRITE, 0, NULL,
@@ -2276,7 +2276,7 @@ static int write_file_atomic(const wchar_t *final_path, const char *data, int da
     if (GetFileAttributesW(final_path) != INVALID_FILE_ATTRIBUTES) {
         /* Existing file — use ReplaceFile for atomic swap + backup */
         wchar_t bak_path[MAX_PATH + 16];
-        swprintf(bak_path, MAX_PATH + 16, L"%s.bak~", final_path);
+        swprintf(bak_path, MAX_PATH + 16, L"%ls.bak~", final_path);
         if (ReplaceFileW(final_path, tmp_path, bak_path,
                          REPLACEFILE_IGNORE_MERGE_ERRORS, NULL, NULL)) {
             return 1;
@@ -2326,11 +2326,11 @@ static void autosave_ensure_dir(void) {
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", appdata, MAX_PATH) == 0)
         return;
 
-    swprintf(g_editor.autosave_dir, MAX_PATH, L"%s\\ProseCode\\autosave", appdata);
+    swprintf(g_editor.autosave_dir, MAX_PATH, L"%ls\\ProseCode\\autosave", appdata);
 
     /* Create directory tree: ProseCode, then ProseCode\autosave */
     wchar_t parent[MAX_PATH];
-    swprintf(parent, MAX_PATH, L"%s\\ProseCode", appdata);
+    swprintf(parent, MAX_PATH, L"%ls\\ProseCode", appdata);
     CreateDirectoryW(parent, NULL);   /* OK if exists */
     CreateDirectoryW(g_editor.autosave_dir, NULL);
 }
@@ -2349,10 +2349,10 @@ static void autosave_path_for_doc(Document *doc, wchar_t *out) {
     autosave_ensure_dir();
     if (doc->filepath[0]) {
         unsigned int h = path_hash(doc->filepath);
-        swprintf(out, MAX_PATH + 32, L"%s\\%08x.pctmp", g_editor.autosave_dir, h);
+        swprintf(out, MAX_PATH + 32, L"%ls\\%08x.pctmp", g_editor.autosave_dir, h);
     } else {
         /* Untitled tabs: use per-document autosave_id for stable filenames */
-        swprintf(out, MAX_PATH + 32, L"%s\\untitled_%u_%u.pctmp",
+        swprintf(out, MAX_PATH + 32, L"%ls\\untitled_%u_%u.pctmp",
                  g_editor.autosave_dir, doc->autosave_id, g_editor.session_start_time);
     }
 }
@@ -2441,14 +2441,14 @@ static void autosave_cleanup_all(void) {
     if (!g_editor.autosave_dir[0]) return;
 
     wchar_t pattern[MAX_PATH];
-    swprintf(pattern, MAX_PATH, L"%s\\*.pctmp", g_editor.autosave_dir);
+    swprintf(pattern, MAX_PATH, L"%ls\\*.pctmp", g_editor.autosave_dir);
 
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW(pattern, &fd);
     if (hFind == INVALID_HANDLE_VALUE) return;
     do {
         wchar_t full[MAX_PATH];
-        swprintf(full, MAX_PATH, L"%s\\%s", g_editor.autosave_dir, fd.cFileName);
+        swprintf(full, MAX_PATH, L"%ls\\%ls", g_editor.autosave_dir, fd.cFileName);
         DeleteFileW(full);
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
@@ -2460,14 +2460,14 @@ static void autosave_cleanup_tmp(void) {
     if (!g_editor.autosave_dir[0]) return;
 
     wchar_t pattern[MAX_PATH];
-    swprintf(pattern, MAX_PATH, L"%s\\*.tmp~", g_editor.autosave_dir);
+    swprintf(pattern, MAX_PATH, L"%ls\\*.tmp~", g_editor.autosave_dir);
 
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW(pattern, &fd);
     if (hFind == INVALID_HANDLE_VALUE) return;
     do {
         wchar_t full[MAX_PATH];
-        swprintf(full, MAX_PATH, L"%s\\%s", g_editor.autosave_dir, fd.cFileName);
+        swprintf(full, MAX_PATH, L"%ls\\%ls", g_editor.autosave_dir, fd.cFileName);
         DeleteFileW(full);
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
@@ -2480,7 +2480,7 @@ static void autosave_recover(void) {
     if (!g_editor.autosave_dir[0]) return;
 
     wchar_t pattern[MAX_PATH];
-    swprintf(pattern, MAX_PATH, L"%s\\*.pctmp", g_editor.autosave_dir);
+    swprintf(pattern, MAX_PATH, L"%ls\\*.pctmp", g_editor.autosave_dir);
 
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW(pattern, &fd);
@@ -2489,7 +2489,7 @@ static void autosave_recover(void) {
     int recovered = 0;
     do {
         wchar_t full[MAX_PATH];
-        swprintf(full, MAX_PATH, L"%s\\%s", g_editor.autosave_dir, fd.cFileName);
+        swprintf(full, MAX_PATH, L"%ls\\%ls", g_editor.autosave_dir, fd.cFileName);
 
         /* Read shadow file */
         HANDLE hFile = CreateFileW(full, GENERIC_READ, FILE_SHARE_READ, NULL,
@@ -2541,7 +2541,7 @@ static void autosave_recover(void) {
         else if (orig_path[0]) name = orig_path;
         else name = L"Untitled";
         swprintf(msg, 512,
-                 L"Prose_Code found unsaved work:\n\n  \"%s\"\n\nRecover this file?",
+                 L"Prose_Code found unsaved work:\n\n  \"%ls\"\n\nRecover this file?",
                  name);
 
         if (MessageBoxW(g_editor.hwnd, msg, L"Crash Recovery",
@@ -2616,7 +2616,7 @@ static int prompt_save_doc(int tab_idx) {
     if (!doc->modified) return 1;
 
     wchar_t msg[256];
-    swprintf(msg, 256, L"Save changes to \"%s\"?", doc->title);
+    swprintf(msg, 256, L"Save changes to \"%ls\"?", doc->title);
     int result = MessageBoxW(g_editor.hwnd, msg, L"Prose_Code",
                              MB_YESNOCANCEL | MB_ICONWARNING);
     if (result == IDYES) {
@@ -2844,7 +2844,7 @@ static void render_titlebar(HDC hdc) {
     Document *doc = current_doc();
     if (doc) {
         wchar_t title[256];
-        swprintf(title, 256, L"%s%s", doc->title, doc->modified ? L" \x2022" : L"");
+        swprintf(title, 256, L"%ls%ls", doc->title, doc->modified ? L" \x2022" : L"");
         draw_text(hdc, title_x, (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_SUBTEXT);
     }
 
@@ -2892,7 +2892,7 @@ static void render_tabbar(HDC hdc) {
     for (int i = 0; i < g_editor.tab_count; i++) {
         Document *doc = g_editor.tabs[i];
         wchar_t label[128];
-        swprintf(label, 128, L"%s%s", doc->title, doc->modified ? L" \x2022" : L"");
+        swprintf(label, 128, L"%ls%ls", doc->title, doc->modified ? L" \x2022" : L"");
         int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
         if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
         if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
@@ -2935,7 +2935,7 @@ static void render_statusbar(HDC hdc) {
 
     /* Left side: mode, line/col */
     wchar_t left[256];
-    swprintf(left, 256, L"  %s  \x2502  Ln %lld, Col %lld",
+    swprintf(left, 256, L"  %ls  \x2502  Ln %lld, Col %lld",
              doc->mode == MODE_PROSE ? L"\x270D Prose" : L"\x2699 Code",
              (long long)line, (long long)col);
     draw_text(hdc, DPI(8), y + (DPI(STATUSBAR_H) - DPI(12)) / 2, left, (int)wcslen(left), CLR_SUBTEXT);
@@ -2967,7 +2967,7 @@ static void render_statusbar(HDC hdc) {
     {
         const wchar_t *tname = g_theme_index == 0 ? L"Dark" : L"Light";
         wchar_t tbuf[32];
-        swprintf(tbuf, 32, L"\x263C %s", tname);
+        swprintf(tbuf, 32, L"\x263C %ls", tname);
         SIZE tsz;
         GetTextExtentPoint32W(hdc, tbuf, (int)wcslen(tbuf), &tsz);
         draw_text(hdc, g_editor.client_w / 2 + 40, y + (DPI(STATUSBAR_H) - DPI(12)) / 2,
@@ -4970,7 +4970,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             int tx = DPI(8);
             for (int i = 0; i < g_editor.tab_count; i++) {
                 wchar_t label[128];
-                swprintf(label, 128, L"%s%s", g_editor.tabs[i]->title, g_editor.tabs[i]->modified ? L" \x2022" : L"");
+                swprintf(label, 128, L"%ls%ls", g_editor.tabs[i]->title, g_editor.tabs[i]->modified ? L" \x2022" : L"");
                 int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
                 if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
                 if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
