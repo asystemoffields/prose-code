@@ -3920,17 +3920,33 @@ static void render_editor(HDC hdc) {
                 }
                 if (dominant != TOK_NORMAL) {
                     COLORREF tc = token_color(dominant);
-                    /* Dim to ~40% brightness for minimap */
-                    mc = RGB(GetRValue(tc)*2/5, GetGValue(tc)*2/5, GetBValue(tc)*2/5);
+                    /* Blend token color with minimap background for visibility.
+                       Flat dimming (*2/5) made light-mode bars black and dark-mode
+                       bars under-saturated.  Blending toward bg keeps hue intact. */
+                    COLORREF bg = CLR_BG_DARK;
+                    if (g_theme.is_dark) {
+                        /* Dark mode: 75% token, 25% bg — vibrant, saturated */
+                        mc = RGB((GetRValue(bg)   + GetRValue(tc)*3) / 4,
+                                 (GetGValue(bg)   + GetGValue(tc)*3) / 4,
+                                 (GetBValue(bg)   + GetBValue(tc)*3) / 4);
+                    } else {
+                        /* Light mode: 45% token, 55% bg — pastel tints, not black */
+                        mc = RGB((GetRValue(bg)*11 + GetRValue(tc)*9) / 20,
+                                 (GetGValue(bg)*11 + GetGValue(tc)*9) / 20,
+                                 (GetBValue(bg)*11 + GetBValue(tc)*9) / 20);
+                    }
                 } else {
-                    mc = g_theme.is_dark ? RGB(120, 122, 138) : RGB(120, 120, 130);
+                    mc = g_theme.is_dark ? RGB(100, 102, 118) : RGB(175, 175, 185);
                 }
             } else {
-                mc = g_theme.is_dark ? RGB(120, 122, 138) : RGB(120, 120, 130);
+                mc = g_theme.is_dark ? RGB(100, 102, 118) : RGB(175, 175, 185);
             }
-            /* Dim lines outside viewport slightly */
+            /* Dim lines outside viewport by blending toward background */
             if (my < edit_y + vp_top || my > edit_y + vp_bot) {
-                mc = RGB(GetRValue(mc)*3/5, GetGValue(mc)*3/5, GetBValue(mc)*3/5);
+                COLORREF bg = CLR_BG_DARK;
+                mc = RGB((GetRValue(bg)*2 + GetRValue(mc)*3) / 5,
+                         (GetGValue(bg)*2 + GetGValue(mc)*3) / 5,
+                         (GetBValue(bg)*2 + GetBValue(mc)*3) / 5);
             }
             fill_rect(hdc, mm_x + 4, my, bar_w, bar_h, mc);
         }
