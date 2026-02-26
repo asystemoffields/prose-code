@@ -724,6 +724,7 @@ typedef struct {
 static void undo_init(UndoStack *us) {
     us->capacity = UNDO_INIT_CAP;
     us->entries = (UndoEntry *)calloc(us->capacity, sizeof(UndoEntry));
+    if (!us->entries) us->capacity = 0;
     us->count = us->current = us->next_group = 0;
 }
 
@@ -1547,7 +1548,7 @@ static bpos pos_to_visual_col(Document *doc, bpos pos) {
     bpos line = pos_to_line(doc, pos);
     bpos ls = lc_line_start(&doc->lc, line);
     int vcol = 0;
-    for (int i = ls; i < pos; i++) {
+    for (bpos i = ls; i < pos; i++) {
         wchar_t c = gb_char_at(&doc->gb, i);
         vcol += (c == L'\t') ? 4 : 1;
     }
@@ -3428,8 +3429,8 @@ static void render_editor(HDC hdc) {
     /* Binary search to find first search match visible on screen */
     int match_cursor = 0;
     if (g_editor.search.active && g_editor.search.match_count > 0) {
-        int first_pos = use_wrap ? doc->wc.entries[first_vline].pos
-                                 : lc_line_start(&doc->lc, first_vline);
+        bpos first_pos = use_wrap ? doc->wc.entries[first_vline].pos
+                                  : lc_line_start(&doc->lc, first_vline);
         int qlen = (int)wcslen(g_editor.search.query);
         int lo = 0, hi = g_editor.search.match_count - 1;
         while (lo < hi) {
@@ -3525,7 +3526,7 @@ static void render_editor(HDC hdc) {
     SynToken line_tokens[2048];
     wchar_t  line_chars[2048];
     int      x_positions[2049]; /* one extra for end-of-line */
-    wchar_t  run_buf[2048];
+    wchar_t  run_buf[2049]; /* +1 to avoid overrun when run_len reaches safe_len */
 
     for (bpos vline = first_vline; vline <= last_vline; vline++) {
         int y = edit_y + (int)(vline * lh - doc->scroll_y);
@@ -3635,15 +3636,15 @@ static void render_editor(HDC hdc) {
         /* Draw search match highlights (advancing cursor, not full scan) */
         if (g_editor.search.active && g_editor.search.match_count > 0) {
             int qlen = (int)wcslen(g_editor.search.query);
-            int line_end_pos = ls + safe_len;
+            bpos line_end_pos = ls + safe_len;
             for (int m = match_cursor; m < g_editor.search.match_count; m++) {
-                int ms = g_editor.search.match_positions[m];
+                bpos ms = g_editor.search.match_positions[m];
                 if (ms >= line_end_pos) break;
-                int me = ms + qlen;
+                bpos me = ms + qlen;
                 if (me <= ls) { match_cursor = m + 1; continue; }
                 /* Clamp to line range */
-                int hs = (ms > ls) ? ms - ls : 0;
-                int he = (me < line_end_pos) ? me - ls : safe_len;
+                int hs = (int)((ms > ls) ? ms - ls : 0);
+                int he = (int)((me < line_end_pos) ? me - ls : safe_len);
                 COLORREF hl = (m == g_editor.search.current_match) ? CLR_SEARCH_HL : CLR_SURFACE1;
                 fill_rect(hdc, text_x + x_positions[hs], y,
                           x_positions[he] - x_positions[hs], lh, hl);
@@ -3701,7 +3702,7 @@ static void render_editor(HDC hdc) {
                         run_is_tab = 0;
                         run_buf[run_len++] = c;
                     } else {
-                        run_buf[run_len++] = c;
+                        if (run_len < 2048) run_buf[run_len++] = c;
                     }
                 }
             }
@@ -5756,7 +5757,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         gb_insert(&doc->gb, ls, L"    ", 4);
                         undo_push(&doc->undo, UNDO_INSERT, ls, L"    ", 4, doc->cursor, doc->cursor, group);
                         offset += 4;
-                        lc_rebuild(&doc->lc, &doc->gb);
                     }
                     doc->cursor += offset;
                     doc->sel_anchor = lc_line_start(&doc->lc, first_line);
@@ -6303,6 +6303,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPWSTR lpCmdLine, int 
     /* Cleanup — autosave shadows already removed in WM_CLOSE */
     for (int i = 0; i < g_editor.tab_count; i++) doc_free(g_editor.tabs[i]);
     if (g_editor.hdc_back) {
+        /* Restore original bitmap before deleting ours (mirrors WM_SIZE cleanup) */
+        SelectObject(g_editor.hdc_back, g_editor.bmp_back_old);
         DeleteObject(g_editor.bmp_back);
         DeleteDC(g_editor.hdc_back);
     }
