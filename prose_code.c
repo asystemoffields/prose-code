@@ -501,11 +501,12 @@ static int lc_notify_insert(LineCache *lc, bpos pos, const wchar_t *text, bpos l
     }
 
     if (newlines == 0) {
-        /* No newlines — just shift all offsets after the insertion point */
+        /* No newlines — just shift all offsets after the insertion point.
+         * The line containing pos still starts at the same offset (the
+         * inserted text becomes part of that line), so only lines AFTER
+         * it need to move forward. */
         bpos line = lc_line_of(lc, pos);
-        /* Also shift this line's offset if insertion is exactly at its start */
-        bpos start = (line < lc->count && lc->offsets[line] == pos && line > 0) ? line : line + 1;
-        for (bpos i = start; i < lc->count; i++)
+        for (bpos i = line + 1; i < lc->count; i++)
             lc->offsets[i] += len;
         return 1;
     }
@@ -544,11 +545,11 @@ static int lc_notify_delete(LineCache *lc, bpos pos, const wchar_t *deleted_text
     }
 
     if (newlines == 0) {
-        /* No newlines — just shift offsets down */
+        /* No newlines — just shift offsets down.
+         * The line containing pos still starts at the same offset,
+         * so only lines AFTER it need to shift back. */
         bpos line = lc_line_of(lc, pos);
-        /* Also shift this line's offset if deletion is exactly at its start */
-        bpos start = (line < lc->count && lc->offsets[line] == pos && line > 0) ? line : line + 1;
-        for (bpos i = start; i < lc->count; i++)
+        for (bpos i = line + 1; i < lc->count; i++)
             lc->offsets[i] -= len;
         return 1;
     }
