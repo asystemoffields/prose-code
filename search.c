@@ -64,6 +64,9 @@ void toggle_search(void) {
         free(g_editor.search.match_positions);
         g_editor.search.match_positions = NULL;
         g_editor.search.replace_focused = 0;
+    } else {
+        if (g_editor.search.query[0] != 0)
+            search_update_matches();
     }
 }
 

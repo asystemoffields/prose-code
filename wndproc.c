@@ -475,6 +475,44 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         if (wParam == TIMER_AUTOSAVE) {
             autosave_tick();
         }
+        if (wParam == TIMER_DRAG_SCROLL) {
+            Document *doc = current_doc();
+            if (doc && g_editor.mouse_captured) {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                int edit_top = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H);
+                int edit_bot = g_editor.client_h - DPI(STATUSBAR_H);
+                int lh = g_editor.line_height;
+                int scroll_amt = 0;
+                if (pt.y < edit_top) {
+                    scroll_amt = -lh * (1 + (edit_top - pt.y) / (lh * 2));
+                } else if (pt.y > edit_bot) {
+                    scroll_amt = lh * (1 + (pt.y - edit_bot) / (lh * 2));
+                }
+                if (scroll_amt != 0) {
+                    doc->target_scroll_y += scroll_amt;
+                    if (doc->target_scroll_y < 0) doc->target_scroll_y = 0;
+                    int total_vl = (int)((doc->mode == MODE_PROSE && doc->wc.count > 0) ? doc->wc.count : doc->lc.count);
+                    int max_scroll = total_vl * lh - (edit_bot - edit_top);
+                    if (max_scroll > 0 && doc->target_scroll_y > max_scroll)
+                        doc->target_scroll_y = max_scroll;
+                    doc->scroll_y = doc->target_scroll_y;
+                    /* Clamp mx to text area */
+                    int clamp_mx = pt.x;
+                    int max_text_x = g_editor.client_w - DPI(SCROLLBAR_W);
+                    if (g_editor.show_minimap) max_text_x -= DPI(MINIMAP_W);
+                    if (clamp_mx > max_text_x) clamp_mx = max_text_x;
+                    bpos pos = mouse_to_pos(clamp_mx, pt.y);
+                    if (doc->sel_anchor < 0) doc->sel_anchor = doc->cursor;
+                    doc->cursor = pos;
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            } else {
+                KillTimer(hwnd, TIMER_DRAG_SCROLL);
+            }
+            return 0;
+        }
         if (wParam == TIMER_SMOOTH) {
             Document *doc = current_doc();
             int needs_invalidate = 0;
@@ -682,6 +720,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, NULL, FALSE);
             }
             return 0;
+        }
+
+        /* Search bar close button */
+        if (g_editor.search.active) {
+            int bar_h = g_editor.search.replace_active ? DPI(72) : DPI(40);
+            int bar_w = DPI(460);
+            int sb_x = g_editor.client_w - bar_w - DPI(24);
+            int sb_y = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H) + DPI(8);
+            int btn_size = DPI(20);
+            int bx = sb_x + bar_w - DPI(12) - btn_size;
+            int by = sb_y + DPI(10);
+            if (mx >= bx && mx < bx + btn_size && my >= by && my < by + btn_size) {
+                toggle_search();
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
+            }
         }
 
         /* Editor area */
@@ -924,6 +978,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 editor_ensure_cursor_visible();
                 InvalidateRect(hwnd, NULL, FALSE);
             }
+
+            /* Start/stop auto-scroll timer when dragging above/below editor */
+            int edit_top = DPI(TITLEBAR_H + MENUBAR_H + TABBAR_H);
+            int edit_bot = g_editor.client_h - DPI(STATUSBAR_H);
+            if (my < edit_top || my > edit_bot) {
+                SetTimer(hwnd, TIMER_DRAG_SCROLL, 30, NULL);
+            } else {
+                KillTimer(hwnd, TIMER_DRAG_SCROLL);
+            }
         }
 
         /* Track titlebar button hover */
@@ -959,6 +1022,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         if (g_editor.mouse_captured) {
             g_editor.mouse_captured = 0;
+            KillTimer(hwnd, TIMER_DRAG_SCROLL);
             ReleaseCapture();
         }
         return 0;

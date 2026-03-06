@@ -233,6 +233,14 @@ void render_searchbar(HDC hdc) {
     draw_text(hdc, x + bar_w - DPI(90), y + DPI(12), mc, (int)wcslen(mc),
               g_editor.search.match_count > 0 ? CLR_SUBTEXT : CLR_RED);
 
+    /* Close (X) button */
+    {
+        int btn_size = DPI(20);
+        int bx = x + bar_w - DPI(12) - btn_size;
+        int by = y + DPI(10);
+        draw_text(hdc, bx + DPI(4), by + DPI(1), L"\x2715", 1, CLR_OVERLAY0);
+    }
+
     if (g_editor.search.replace_active) {
         draw_text(hdc, x + DPI(12), y + DPI(43), L"\x21C6", 1, CLR_OVERLAY0);
         int rlen = (int)wcslen(g_editor.search.replace_text);

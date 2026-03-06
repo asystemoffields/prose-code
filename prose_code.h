@@ -135,6 +135,7 @@ typedef struct {
 #define TIMER_BLINK      1
 #define TIMER_SMOOTH     2
 #define TIMER_AUTOSAVE   3
+#define TIMER_DRAG_SCROLL 4
 
 /* ═══════════════════════════════════════════════════════════════
  * DATA STRUCTURES
