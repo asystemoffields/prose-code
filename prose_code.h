@@ -111,8 +111,8 @@ typedef struct {
 #define CLR_SEARCH_HL    (g_theme.search_hl)
 
 /* ── Layout constants ── */
-#define TITLEBAR_H       30
-#define TABBAR_H         38
+#define TITLEBAR_H       36
+#define TABBAR_H         0
 #define MENUBAR_H        0
 #define STATUSBAR_H      30
 #define GUTTER_PAD       16

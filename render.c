@@ -29,7 +29,7 @@ void render_titlebar(HDC hdc) {
 
     /* Dropdown trigger button (small down arrow) */
     int btn_size = DPI(22);
-    int btn_x = DPI(8);
+    int btn_x = DPI(6);
     int btn_y = (th - btn_size) / 2;
 
     COLORREF btn_bg;
@@ -48,14 +48,37 @@ void render_titlebar(HDC hdc) {
     SetTextColor(hdc, icon_clr);
     DrawTextW(hdc, L"\x25BE", 1, &br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    /* Document title */
-    int title_x = btn_x + btn_size + DPI(10);
-    SelectObject(hdc, g_editor.font_title);
-    Document *doc = current_doc();
-    if (doc) {
-        wchar_t title[256];
-        swprintf(title, 256, L"%ls%ls", doc->title, doc->modified ? L" \x2022" : L"");
-        draw_text(hdc, title_x, (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_SUBTEXT);
+    /* Tabs (inline, right after dropdown button) */
+    int tx = btn_x + btn_size + DPI(8);
+    int right_limit = g_editor.client_w - DPI(46) * 3 - DPI(8);
+    SelectObject(hdc, g_editor.font_ui_small);
+
+    for (int i = 0; i < g_editor.tab_count; i++) {
+        Document *doc = g_editor.tabs[i];
+        wchar_t label[128];
+        swprintf(label, 128, L"%ls%ls", doc->title, doc->modified ? L" \x2022" : L"");
+        int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
+        if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
+        if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
+
+        if (tx + tw > right_limit) break;
+
+        if (i == g_editor.active_tab) {
+            fill_rounded_rect(hdc, tx, DPI(5), tw, th - DPI(5), DPI(10), CLR_TAB_ACTIVE);
+            fill_rounded_rect(hdc, tx + DPI(12), th - DPI(3), tw - DPI(24), DPI(2), DPI(1), CLR_ACCENT);
+            draw_text(hdc, tx + DPI(TAB_PAD), (th - DPI(12)) / 2, label, (int)wcslen(label), CLR_TEXT);
+        } else {
+            draw_text(hdc, tx + DPI(TAB_PAD), (th - DPI(12)) / 2, label, (int)wcslen(label), CLR_OVERLAY0);
+        }
+
+        draw_text(hdc, tx + tw - DPI(20), (th - DPI(12)) / 2, L"\x00D7", 1, CLR_OVERLAY0);
+
+        tx += tw + DPI(4);
+    }
+
+    /* New tab (+) button */
+    if (tx + DPI(30) <= right_limit) {
+        draw_text(hdc, tx + DPI(8), (th - DPI(12)) / 2, L"+", 1, CLR_OVERLAY0);
     }
 
     /* Window control buttons */
@@ -86,38 +109,8 @@ void render_titlebar(HDC hdc) {
 }
 
 void render_tabbar(HDC hdc) {
-    int y = DPI(TITLEBAR_H + MENUBAR_H);
-    int tbh = DPI(TABBAR_H);
-    fill_rect(hdc, 0, y, g_editor.client_w, tbh, CLR_BG_DARK);
-
-    SelectObject(hdc, g_editor.font_ui_small);
-    SetBkMode(hdc, TRANSPARENT);
-
-    int x = DPI(8);
-    for (int i = 0; i < g_editor.tab_count; i++) {
-        Document *doc = g_editor.tabs[i];
-        wchar_t label[128];
-        swprintf(label, 128, L"%ls%ls", doc->title, doc->modified ? L" \x2022" : L"");
-        int tw = (int)wcslen(label) * DPI(8) + DPI(TAB_PAD) * 2;
-        if (tw < DPI(TAB_MIN_W)) tw = DPI(TAB_MIN_W);
-        if (tw > DPI(TAB_MAX_W)) tw = DPI(TAB_MAX_W);
-
-        if (i == g_editor.active_tab) {
-            fill_rounded_rect(hdc, x, y + DPI(5), tw, tbh - DPI(5), DPI(10), CLR_TAB_ACTIVE);
-            fill_rounded_rect(hdc, x + DPI(12), y + tbh - DPI(3), tw - DPI(24), DPI(2), DPI(1), CLR_ACCENT);
-            draw_text(hdc, x + DPI(TAB_PAD), y + (tbh - DPI(12)) / 2, label, (int)wcslen(label), CLR_TEXT);
-        } else {
-            draw_text(hdc, x + DPI(TAB_PAD), y + (tbh - DPI(12)) / 2, label, (int)wcslen(label), CLR_OVERLAY0);
-        }
-
-        draw_text(hdc, x + tw - DPI(20), y + (tbh - DPI(12)) / 2, L"\x00D7", 1, CLR_OVERLAY0);
-
-        x += tw + DPI(4);
-    }
-
-    draw_text(hdc, x + DPI(8), y + (tbh - DPI(12)) / 2, L"+", 1, CLR_OVERLAY0);
-
-    fill_rect(hdc, 0, y + tbh - 1, g_editor.client_w, 1, CLR_SURFACE0);
+    /* Tabs are now rendered inline in the titlebar */
+    (void)hdc;
 }
 
 void render_statusbar(HDC hdc) {
