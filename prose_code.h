@@ -337,6 +337,7 @@ typedef struct {
     int menu_hover_item;    /* flat index across all menus */
 
     int dropdown_hover;     /* 1 if hovering the dropdown trigger button */
+    int dropdown_btn_x;     /* computed x position of dropdown button */
 
     int spellcheck_enabled;
 

@@ -27,29 +27,8 @@ void render_titlebar(HDC hdc) {
 
     SetBkMode(hdc, TRANSPARENT);
 
-    /* Dropdown trigger button (small down arrow) */
-    int btn_size = DPI(22);
-    int btn_x = DPI(6);
-    int btn_y = (th - btn_size) / 2;
-
-    COLORREF btn_bg;
-    if (g_editor.menu_open >= 0) {
-        btn_bg = CLR_ACCENT;
-    } else if (g_editor.dropdown_hover) {
-        btn_bg = g_theme.is_dark ? RGB(50, 50, 62) : RGB(220, 220, 225);
-    } else {
-        btn_bg = g_theme.is_dark ? RGB(38, 38, 46) : RGB(235, 235, 238);
-    }
-    fill_rounded_rect(hdc, btn_x, btn_y, btn_size, btn_size, DPI(4), btn_bg);
-
-    SelectObject(hdc, g_editor.font_ui_small);
-    COLORREF icon_clr = (g_editor.menu_open >= 0) ? RGB(255, 255, 255) : CLR_SUBTEXT;
-    RECT br = { btn_x, btn_y, btn_x + btn_size, btn_y + btn_size };
-    SetTextColor(hdc, icon_clr);
-    DrawTextW(hdc, L"\x25BE", 1, &br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-    /* Tabs (inline, right after dropdown button) */
-    int tx = btn_x + btn_size + DPI(8);
+    /* Tabs (starting from left edge) */
+    int tx = DPI(6);
     int right_limit = g_editor.client_w - DPI(46) * 3 - DPI(8);
     SelectObject(hdc, g_editor.font_ui_small);
 
@@ -71,15 +50,42 @@ void render_titlebar(HDC hdc) {
             draw_text(hdc, tx + DPI(TAB_PAD), (th - DPI(12)) / 2, label, (int)wcslen(label), CLR_OVERLAY0);
         }
 
-        draw_text(hdc, tx + tw - DPI(20), (th - DPI(12)) / 2, L"\x00D7", 1, CLR_OVERLAY0);
+        /* Tab close (×) button — use main font for larger size */
+        SelectObject(hdc, g_editor.font_ui);
+        draw_text(hdc, tx + tw - DPI(22), (th - DPI(16)) / 2, L"\x00D7", 1, CLR_OVERLAY0);
+        SelectObject(hdc, g_editor.font_ui_small);
 
         tx += tw + DPI(4);
     }
 
-    /* New tab (+) button */
+    /* New tab (+) button — use main font for larger size */
     if (tx + DPI(30) <= right_limit) {
-        draw_text(hdc, tx + DPI(8), (th - DPI(12)) / 2, L"+", 1, CLR_OVERLAY0);
+        SelectObject(hdc, g_editor.font_ui);
+        draw_text(hdc, tx + DPI(6), (th - DPI(16)) / 2, L"+", 1, CLR_OVERLAY0);
+        SelectObject(hdc, g_editor.font_ui_small);
     }
+
+    /* Dropdown trigger button (▾) — after (+) button */
+    int btn_size = DPI(22);
+    int btn_x = tx + DPI(32);
+    int btn_y = (th - btn_size) / 2;
+    g_editor.dropdown_btn_x = btn_x;
+
+    COLORREF btn_bg;
+    if (g_editor.menu_open >= 0) {
+        btn_bg = CLR_ACCENT;
+    } else if (g_editor.dropdown_hover) {
+        btn_bg = g_theme.is_dark ? RGB(50, 50, 62) : RGB(220, 220, 225);
+    } else {
+        btn_bg = g_theme.is_dark ? RGB(38, 38, 46) : RGB(235, 235, 238);
+    }
+    fill_rounded_rect(hdc, btn_x, btn_y, btn_size, btn_size, DPI(4), btn_bg);
+
+    SelectObject(hdc, g_editor.font_ui_small);
+    COLORREF icon_clr = (g_editor.menu_open >= 0) ? RGB(255, 255, 255) : CLR_SUBTEXT;
+    RECT br = { btn_x, btn_y, btn_x + btn_size, btn_y + btn_size };
+    SetTextColor(hdc, icon_clr);
+    DrawTextW(hdc, L"\x25BE", 1, &br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     /* Window control buttons */
     int bw = DPI(46), bh = th;
@@ -941,7 +947,7 @@ void render_menu_dropdown(HDC hdc) {
     int dropdown_w = DPI(260);
     int pad_x = DPI(12);
 
-    int dropdown_x = DPI(8);
+    int dropdown_x = g_editor.dropdown_btn_x;
     int dropdown_y = DPI(TITLEBAR_H);
 
     /* Calculate total height across all menus */

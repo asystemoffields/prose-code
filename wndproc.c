@@ -616,26 +616,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            /* Check dropdown trigger button click */
-            int btn_size = DPI(22);
-            int btn_x = DPI(6);
-            int btn_y = (DPI(TITLEBAR_H) - btn_size) / 2;
-
-            if (mx >= btn_x && mx < btn_x + btn_size &&
-                my >= btn_y && my < btn_y + btn_size) {
-                if (g_editor.menu_open >= 0) {
-                    g_editor.menu_open = -1;
-                } else {
-                    g_editor.menu_open = 0;
-                    g_editor.menu_hover_item = -1;
-                }
-                InvalidateRect(hwnd, NULL, FALSE);
-                return 0;
-            }
-
-            /* Tab clicks (inline in titlebar) */
+            /* Tab clicks (inline in titlebar, starting from left) */
             {
-                int tx = btn_x + btn_size + DPI(8);
+                int tx = DPI(6);
                 int right_limit = g_editor.client_w - DPI(46) * 3 - DPI(8);
                 for (int i = 0; i < g_editor.tab_count; i++) {
                     wchar_t label[128];
@@ -666,6 +649,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 }
             }
 
+            /* Check dropdown trigger button click (after tabs and +) */
+            {
+                int btn_size = DPI(22);
+                int btn_x = g_editor.dropdown_btn_x;
+                int btn_y = (DPI(TITLEBAR_H) - btn_size) / 2;
+
+                if (mx >= btn_x && mx < btn_x + btn_size &&
+                    my >= btn_y && my < btn_y + btn_size) {
+                    if (g_editor.menu_open >= 0) {
+                        g_editor.menu_open = -1;
+                    } else {
+                        g_editor.menu_open = 0;
+                        g_editor.menu_hover_item = -1;
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                    return 0;
+                }
+            }
+
             /* Drag to move (anywhere else in titlebar) */
             g_editor.titlebar_dragging = 1;
             g_editor.drag_start.x = mx;
@@ -681,7 +683,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int sep_h = DPI(9);
             int header_h = DPI(24);
             int dropdown_w = DPI(260);
-            int dropdown_x = DPI(8);
+            int dropdown_x = g_editor.dropdown_btn_x;
             int dropdown_y = DPI(TITLEBAR_H);
 
             /* Calculate total dropdown height */
@@ -866,7 +868,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_editor.dropdown_hover = 0;
         if (my < DPI(TITLEBAR_H)) {
             int btn_size = DPI(22);
-            int btn_x = DPI(6);
+            int btn_x = g_editor.dropdown_btn_x;
             int btn_y = (DPI(TITLEBAR_H) - btn_size) / 2;
             if (mx >= btn_x && mx < btn_x + btn_size &&
                 my >= btn_y && my < btn_y + btn_size) {
@@ -882,7 +884,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             int sep_h = DPI(9);
             int header_h = DPI(24);
             int dropdown_w = DPI(260);
-            int dropdown_x = DPI(8);
+            int dropdown_x = g_editor.dropdown_btn_x;
             int dropdown_y = DPI(TITLEBAR_H);
 
             int old_hover = g_editor.menu_hover_item;
