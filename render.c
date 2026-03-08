@@ -25,44 +25,31 @@ void render_titlebar(HDC hdc) {
     int th = DPI(TITLEBAR_H);
     fill_rect(hdc, 0, 0, g_editor.client_w, th, CLR_BG_DARK);
 
-    SelectObject(hdc, g_editor.font_title);
     SetBkMode(hdc, TRANSPARENT);
 
-    static const wchar_t *fab_icons[MENU_COUNT] = {
-        L"\x2630", L"\x270E", L"\x2315", L"\x2699",
-    };
+    /* Dropdown trigger button (small down arrow) */
+    int btn_size = DPI(22);
+    int btn_x = DPI(8);
+    int btn_y = (th - btn_size) / 2;
 
-    int fab_size = DPI(28);
-    int fab_pad = DPI(6);
-    int fab_start_x = DPI(8);
-    int fab_y = (th - fab_size) / 2;
+    COLORREF btn_bg;
+    if (g_editor.menu_open >= 0) {
+        btn_bg = CLR_ACCENT;
+    } else if (g_editor.dropdown_hover) {
+        btn_bg = g_theme.is_dark ? RGB(50, 50, 62) : RGB(220, 220, 225);
+    } else {
+        btn_bg = g_theme.is_dark ? RGB(38, 38, 46) : RGB(235, 235, 238);
+    }
+    fill_rounded_rect(hdc, btn_x, btn_y, btn_size, btn_size, DPI(4), btn_bg);
 
     SelectObject(hdc, g_editor.font_ui_small);
-    for (int i = 0; i < MENU_COUNT; i++) {
-        int fx = fab_start_x + i * (fab_size + fab_pad);
+    COLORREF icon_clr = (g_editor.menu_open >= 0) ? RGB(255, 255, 255) : CLR_SUBTEXT;
+    RECT br = { btn_x, btn_y, btn_x + btn_size, btn_y + btn_size };
+    SetTextColor(hdc, icon_clr);
+    DrawTextW(hdc, L"\x25BE", 1, &br, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        COLORREF fab_bg;
-        if (g_editor.menu_open == i) {
-            fab_bg = CLR_ACCENT;
-        } else if (g_editor.fab_hover == i) {
-            fab_bg = g_theme.is_dark ? RGB(50, 50, 62) : RGB(220, 220, 225);
-        } else {
-            fab_bg = g_theme.is_dark ? RGB(38, 38, 46) : RGB(235, 235, 238);
-        }
-        fill_rounded_rect(hdc, fx, fab_y, fab_size, fab_size, fab_size / 2, fab_bg);
-
-        COLORREF icon_clr = (g_editor.menu_open == i) ?
-            (g_theme.is_dark ? RGB(255, 255, 255) : RGB(255, 255, 255)) : CLR_SUBTEXT;
-        SetTextColor(hdc, icon_clr);
-        RECT fr = { fx, fab_y, fx + fab_size, fab_y + fab_size };
-        DrawTextW(hdc, fab_icons[i], 1, &fr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-        g_editor.menu_bar_widths[i] = fab_size + fab_pad;
-    }
-
-    int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
-    int title_x = fab_start_x + fab_total_w + DPI(12);
-
+    /* Document title */
+    int title_x = btn_x + btn_size + DPI(10);
     SelectObject(hdc, g_editor.font_title);
     Document *doc = current_doc();
     if (doc) {
@@ -71,6 +58,7 @@ void render_titlebar(HDC hdc) {
         draw_text(hdc, title_x, (th - DPI(16)) / 2, title, (int)wcslen(title), CLR_SUBTEXT);
     }
 
+    /* Window control buttons */
     int bw = DPI(46), bh = th;
     int x = g_editor.client_w - bw * 3;
 
@@ -952,31 +940,35 @@ void render_menubar(HDC hdc) {
 }
 
 void render_menu_dropdown(HDC hdc) {
-    if (g_editor.menu_open < 0 || g_editor.menu_open >= MENU_COUNT) return;
+    if (g_editor.menu_open < 0) return;
 
-    const MenuDef *menu = &g_menus[g_editor.menu_open];
     int item_h = DPI(26);
     int sep_h = DPI(9);
+    int header_h = DPI(24);
     int dropdown_w = DPI(260);
     int pad_x = DPI(12);
 
-    int fab_size = DPI(28);
-    int fab_pad = DPI(6);
-    int fab_start_x = DPI(8);
-
-    int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+    int dropdown_x = DPI(8);
     int dropdown_y = DPI(TITLEBAR_H);
 
+    /* Calculate total height across all menus */
     int total_h = DPI(4);
-    for (int i = 0; i < menu->item_count; i++) {
-        total_h += (menu->items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+    for (int m = 0; m < MENU_COUNT; m++) {
+        if (m > 0) total_h += sep_h;  /* separator between categories */
+        total_h += header_h;           /* category header */
+        for (int i = 0; i < g_menus[m].item_count; i++) {
+            total_h += (g_menus[m].items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+        }
     }
     total_h += DPI(4);
 
+    /* Shadow */
     fill_rounded_rect(hdc, dropdown_x + DPI(2), dropdown_y + DPI(2),
                       dropdown_w, total_h, DPI(8), RGB(0, 0, 0));
+    /* Background */
     fill_rounded_rect(hdc, dropdown_x, dropdown_y, dropdown_w, total_h, DPI(8),
                       g_theme.is_dark ? RGB(34, 34, 42) : RGB(248, 248, 248));
+    /* Border */
     HPEN pen = CreatePen(PS_SOLID, 1, CLR_SURFACE1);
     HBRUSH hollow = (HBRUSH)GetStockObject(HOLLOW_BRUSH);
     HPEN old_pen = (HPEN)SelectObject(hdc, pen);
@@ -991,40 +983,60 @@ void render_menu_dropdown(HDC hdc) {
     SetBkMode(hdc, TRANSPARENT);
 
     int cy = dropdown_y + DPI(4);
-    for (int i = 0; i < menu->item_count; i++) {
-        const MenuItem *item = &menu->items[i];
+    int flat_idx = 0;
 
-        if (item->id == MENU_ID_SEP) {
+    for (int m = 0; m < MENU_COUNT; m++) {
+        const MenuDef *menu = &g_menus[m];
+
+        /* Category separator (between groups, not before the first) */
+        if (m > 0) {
             int line_y = cy + sep_h / 2;
             fill_rect(hdc, dropdown_x + pad_x, line_y, dropdown_w - pad_x * 2, 1, CLR_SURFACE0);
             cy += sep_h;
-            continue;
         }
 
-        if (g_editor.menu_hover_item == i) {
-            fill_rounded_rect(hdc, dropdown_x + DPI(4), cy, dropdown_w - DPI(8), item_h,
-                              DPI(4), CLR_ACCENT);
-            SetTextColor(hdc, g_theme.is_dark ? RGB(255, 255, 255) : RGB(255, 255, 255));
+        /* Category header */
+        SelectObject(hdc, g_editor.font_title);
+        draw_text(hdc, dropdown_x + pad_x, cy + (header_h - DPI(12)) / 2,
+                  menu->label, (int)wcslen(menu->label), CLR_OVERLAY0);
+        SelectObject(hdc, g_editor.font_ui_small);
+        cy += header_h;
+
+        /* Menu items */
+        for (int i = 0; i < menu->item_count; i++) {
+            const MenuItem *item = &menu->items[i];
+
+            if (item->id == MENU_ID_SEP) {
+                int line_y = cy + sep_h / 2;
+                fill_rect(hdc, dropdown_x + pad_x, line_y, dropdown_w - pad_x * 2, 1, CLR_SURFACE0);
+                cy += sep_h;
+                continue;
+            }
+
+            if (g_editor.menu_hover_item == flat_idx) {
+                fill_rounded_rect(hdc, dropdown_x + DPI(4), cy, dropdown_w - DPI(8), item_h,
+                                  DPI(4), CLR_ACCENT);
+            }
+
+            COLORREF label_clr = (g_editor.menu_hover_item == flat_idx)
+                ? RGB(255, 255, 255) : CLR_TEXT;
+            draw_text(hdc, dropdown_x + pad_x, cy + (item_h - DPI(12)) / 2,
+                      item->label, (int)wcslen(item->label), label_clr);
+
+            if (item->shortcut) {
+                SIZE ssz;
+                GetTextExtentPoint32W(hdc, item->shortcut, (int)wcslen(item->shortcut), &ssz);
+                COLORREF sc_clr = (g_editor.menu_hover_item == flat_idx)
+                    ? (g_theme.is_dark ? RGB(205, 210, 230) : RGB(220, 230, 255))
+                    : CLR_OVERLAY0;
+                draw_text(hdc, dropdown_x + dropdown_w - pad_x - ssz.cx,
+                          cy + (item_h - DPI(12)) / 2,
+                          item->shortcut, (int)wcslen(item->shortcut), sc_clr);
+            }
+
+            flat_idx++;
+            cy += item_h;
         }
-
-        COLORREF label_clr = (g_editor.menu_hover_item == i)
-            ? (g_theme.is_dark ? RGB(255, 255, 255) : RGB(255, 255, 255))
-            : CLR_TEXT;
-        draw_text(hdc, dropdown_x + pad_x, cy + (item_h - DPI(12)) / 2,
-                  item->label, (int)wcslen(item->label), label_clr);
-
-        if (item->shortcut) {
-            SIZE ssz;
-            GetTextExtentPoint32W(hdc, item->shortcut, (int)wcslen(item->shortcut), &ssz);
-            COLORREF sc_clr = (g_editor.menu_hover_item == i)
-                ? (g_theme.is_dark ? RGB(205, 210, 230) : RGB(220, 230, 255))
-                : CLR_OVERLAY0;
-            draw_text(hdc, dropdown_x + dropdown_w - pad_x - ssz.cx,
-                      cy + (item_h - DPI(12)) / 2,
-                      item->shortcut, (int)wcslen(item->shortcut), sc_clr);
-        }
-
-        cy += item_h;
     }
 }
 

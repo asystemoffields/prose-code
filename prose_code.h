@@ -111,7 +111,7 @@ typedef struct {
 #define CLR_SEARCH_HL    (g_theme.search_hl)
 
 /* ── Layout constants ── */
-#define TITLEBAR_H       40
+#define TITLEBAR_H       30
 #define TABBAR_H         38
 #define MENUBAR_H        0
 #define STATUSBAR_H      30
@@ -333,11 +333,10 @@ typedef struct {
     wchar_t autosave_dir[MAX_PATH];
     unsigned int next_autosave_id;
 
-    int menu_open;
-    int menu_hover_item;
-    int menu_bar_widths[MENU_COUNT];
+    int menu_open;          /* -1 = closed, 0 = combined dropdown open */
+    int menu_hover_item;    /* flat index across all menus */
 
-    int fab_hover;
+    int dropdown_hover;     /* 1 if hovering the dropdown trigger button */
 
     int spellcheck_enabled;
 

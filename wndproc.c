@@ -227,7 +227,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         g_editor.font_size = FONT_SIZE_DEFAULT;
         g_editor.menu_open = -1;
         g_editor.menu_hover_item = -1;
-        g_editor.fab_hover = -1;
+        g_editor.dropdown_hover = 0;
         g_editor.spellcheck_enabled = 1;  /* spell check on by default */
 
         g_editor.font_main = CreateFontW(
@@ -616,29 +616,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 return 0;
             }
 
-            /* Check FAB clicks (LEFT SIDE of titlebar) */
-            int fab_size = DPI(28);
-            int fab_pad = DPI(6);
-            int fab_start_x = DPI(8);
-            int fab_y = (DPI(TITLEBAR_H) - fab_size) / 2;
-            int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
+            /* Check dropdown trigger button click */
+            int btn_size = DPI(22);
+            int btn_x = DPI(8);
+            int btn_y = (DPI(TITLEBAR_H) - btn_size) / 2;
 
-            if (mx >= fab_start_x && mx < fab_start_x + fab_total_w &&
-                my >= fab_y && my < fab_y + fab_size) {
-                for (int i = 0; i < MENU_COUNT; i++) {
-                    int fx = fab_start_x + i * (fab_size + fab_pad);
-                    if (mx >= fx && mx < fx + fab_size) {
-                        /* Toggle this menu open/closed */
-                        if (g_editor.menu_open == i) {
-                            g_editor.menu_open = -1;
-                        } else {
-                            g_editor.menu_open = i;
-                            g_editor.menu_hover_item = -1;
-                        }
-                        InvalidateRect(hwnd, NULL, FALSE);
-                        return 0;
-                    }
+            if (mx >= btn_x && mx < btn_x + btn_size &&
+                my >= btn_y && my < btn_y + btn_size) {
+                if (g_editor.menu_open >= 0) {
+                    g_editor.menu_open = -1;
+                } else {
+                    g_editor.menu_open = 0;
+                    g_editor.menu_hover_item = -1;
                 }
+                InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
             }
 
             /* Drag to move (anywhere else in titlebar) */
@@ -649,40 +641,43 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
         }
 
-        /* Menu dropdown click — MUST be checked before tab bar since
+        /* Combined dropdown click — MUST be checked before tab bar since
          * the dropdown overlaps the tab bar's y-range */
         if (g_editor.menu_open >= 0) {
-            const MenuDef *menu = &g_menus[g_editor.menu_open];
             int item_h = DPI(26);
             int sep_h = DPI(9);
+            int header_h = DPI(24);
             int dropdown_w = DPI(260);
-
-            /* FAB-based dropdown position (LEFT SIDE) */
-            int fab_size = DPI(28);
-            int fab_pad = DPI(6);
-            int fab_start_x = DPI(8);
-            int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+            int dropdown_x = DPI(8);
             int dropdown_y = DPI(TITLEBAR_H);
 
             /* Calculate total dropdown height */
             int total_dd_h = DPI(4);
-            for (int i = 0; i < menu->item_count; i++)
-                total_dd_h += (menu->items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+            for (int m = 0; m < MENU_COUNT; m++) {
+                if (m > 0) total_dd_h += sep_h;
+                total_dd_h += header_h;
+                for (int i = 0; i < g_menus[m].item_count; i++)
+                    total_dd_h += (g_menus[m].items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+            }
             total_dd_h += DPI(4);
 
             if (mx >= dropdown_x && mx < dropdown_x + dropdown_w &&
                 my >= dropdown_y && my < dropdown_y + total_dd_h) {
                 int cy = dropdown_y + DPI(4);
-                for (int i = 0; i < menu->item_count; i++) {
-                    int h = (menu->items[i].id == MENU_ID_SEP) ? sep_h : item_h;
-                    if (menu->items[i].id != MENU_ID_SEP &&
-                        my >= cy && my < cy + h) {
-                        menu_execute(menu->items[i].id);
-                        return 0;
+                for (int m = 0; m < MENU_COUNT; m++) {
+                    if (m > 0) cy += sep_h;
+                    cy += header_h;  /* skip category header */
+                    for (int i = 0; i < g_menus[m].item_count; i++) {
+                        int h = (g_menus[m].items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+                        if (g_menus[m].items[i].id != MENU_ID_SEP &&
+                            my >= cy && my < cy + h) {
+                            menu_execute(g_menus[m].items[i].id);
+                            return 0;
+                        }
+                        cy += h;
                     }
-                    cy += h;
                 }
-                /* Clicked inside dropdown but on nothing (e.g. separator) */
+                /* Clicked inside dropdown but on nothing (header/separator) */
                 return 0;
             }
             /* Clicked outside dropdown — close it */
@@ -863,61 +858,48 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int mx = GET_X_LPARAM(lParam);
         int my = GET_Y_LPARAM(lParam);
 
-        /* FAB hover tracking in titlebar (LEFT SIDE) */
-        int old_fab_hover = g_editor.fab_hover;
-        g_editor.fab_hover = -1;
+        /* Dropdown trigger button hover tracking */
+        int old_dropdown_hover = g_editor.dropdown_hover;
+        g_editor.dropdown_hover = 0;
         if (my < DPI(TITLEBAR_H)) {
-            int fab_size = DPI(28);
-            int fab_pad = DPI(6);
-            int fab_start_x = DPI(8);
-            int fab_total_w = MENU_COUNT * (fab_size + fab_pad);
-            int fab_y = (DPI(TITLEBAR_H) - fab_size) / 2;
-
-            if (mx >= fab_start_x && mx < fab_start_x + fab_total_w &&
-                my >= fab_y && my < fab_y + fab_size) {
-                for (int i = 0; i < MENU_COUNT; i++) {
-                    int fx = fab_start_x + i * (fab_size + fab_pad);
-                    if (mx >= fx && mx < fx + fab_size) {
-                        g_editor.fab_hover = i;
-                        /* If a menu is open and we hover a different FAB, switch to it */
-                        if (g_editor.menu_open >= 0 && g_editor.menu_open != i) {
-                            g_editor.menu_open = i;
-                            g_editor.menu_hover_item = -1;
-                        }
-                        break;
-                    }
-                }
+            int btn_size = DPI(22);
+            int btn_x = DPI(8);
+            int btn_y = (DPI(TITLEBAR_H) - btn_size) / 2;
+            if (mx >= btn_x && mx < btn_x + btn_size &&
+                my >= btn_y && my < btn_y + btn_size) {
+                g_editor.dropdown_hover = 1;
             }
         }
-        if (old_fab_hover != g_editor.fab_hover)
+        if (old_dropdown_hover != g_editor.dropdown_hover)
             InvalidateRect(hwnd, NULL, FALSE);
 
-        /* Menu dropdown hover tracking */
+        /* Combined dropdown hover tracking */
         if (g_editor.menu_open >= 0) {
-            const MenuDef *menu = &g_menus[g_editor.menu_open];
             int item_h = DPI(26);
             int sep_h = DPI(9);
+            int header_h = DPI(24);
             int dropdown_w = DPI(260);
-
-            /* FAB-based dropdown position (LEFT SIDE) */
-            int fab_size = DPI(28);
-            int fab_pad = DPI(6);
-            int fab_start_x = DPI(8);
-            int dropdown_x = fab_start_x + g_editor.menu_open * (fab_size + fab_pad);
+            int dropdown_x = DPI(8);
             int dropdown_y = DPI(TITLEBAR_H);
 
             int old_hover = g_editor.menu_hover_item;
             g_editor.menu_hover_item = -1;
             if (mx >= dropdown_x && mx < dropdown_x + dropdown_w) {
                 int cy = dropdown_y + DPI(4);
-                for (int i = 0; i < menu->item_count; i++) {
-                    int h = (menu->items[i].id == MENU_ID_SEP) ? sep_h : item_h;
-                    if (menu->items[i].id != MENU_ID_SEP &&
-                        my >= cy && my < cy + h) {
-                        g_editor.menu_hover_item = i;
-                        break;
+                int flat_idx = 0;
+                for (int m = 0; m < MENU_COUNT; m++) {
+                    if (m > 0) cy += sep_h;
+                    cy += header_h;
+                    for (int i = 0; i < g_menus[m].item_count; i++) {
+                        int h = (g_menus[m].items[i].id == MENU_ID_SEP) ? sep_h : item_h;
+                        if (g_menus[m].items[i].id != MENU_ID_SEP) {
+                            if (my >= cy && my < cy + h) {
+                                g_editor.menu_hover_item = flat_idx;
+                            }
+                            flat_idx++;
+                        }
+                        cy += h;
                     }
-                    cy += h;
                 }
             }
             if (old_hover != g_editor.menu_hover_item)
