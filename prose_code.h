@@ -112,7 +112,7 @@ typedef struct {
 
 /* ── Layout constants ── */
 #define TITLEBAR_H       36
-#define TABBAR_H         0
+#define TABBAR_H         6
 #define MENUBAR_H        0
 #define STATUSBAR_H      30
 #define GUTTER_PAD       16
